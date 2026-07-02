@@ -1,0 +1,8 @@
+zig-out/
+.zig-cache/
+
+# disk images, can always be rebuilt
+*.img
+*.iso
+
+.DS_Store
