@@ -1,0 +1,8 @@
+.{
+    .name = .teryqen,
+    .version = "0.0.0",
+    .fingerprint = 0xafe438ccc42d814c,
+    .minimum_zig_version = "0.16.0",
+    .dependencies = .{},
+    .paths = .{""},
+}

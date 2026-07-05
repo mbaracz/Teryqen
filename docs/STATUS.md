@@ -1,10 +1,11 @@
 # Status
 
-Just started, nothing works yet.
+`zig build` makes a kernel ELF (zig-out/bin/kernel). It doesn't do anything
+yet, it just halts.
 
 ## Todo
 
-- [ ] build.zig that produces a freestanding x86_64 kernel
+- [x] build.zig that produces a freestanding x86_64 kernel
 - [ ] boot it with Limine in QEMU
 - [ ] print something on serial
 - [ ] figure out how to draw text on the framebuffer
