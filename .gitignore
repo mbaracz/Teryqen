@@ -1,7 +1,7 @@
 zig-out/
 .zig-cache/
+zig-pkg/
 
-# disk images, can always be rebuilt
 *.img
 *.iso
 

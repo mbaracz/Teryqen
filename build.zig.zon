@@ -3,6 +3,11 @@
     .version = "0.0.0",
     .fingerprint = 0xafe438ccc42d814c,
     .minimum_zig_version = "0.16.0",
-    .dependencies = .{},
+    .dependencies = .{
+        .limine = .{
+            .url = "https://github.com/Limine-Bootloader/Limine/releases/download/v12.9.1/limine-binary.tar.xz",
+            .hash = "N-V-__8AAGiOVQB3GgttDPP54fYIS3H1xKM4452sdbPzSBAm",
+        },
+    },
     .paths = .{""},
 }

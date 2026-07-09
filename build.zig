@@ -45,4 +45,31 @@ pub fn build(b: *std.Build) void {
     kernel.link_z_max_page_size = 0x1000;
 
     b.installArtifact(kernel);
+
+    // Folder that looks like an EFI partition: Limine + config + kernel.
+    // QEMU can serve a plain folder as a FAT disk (fat:...), so no need
+    // to make a real disk image yet.
+    const limine = b.dependency("limine", .{});
+    const esp = b.addWriteFiles();
+    _ = esp.addCopyFile(limine.path("BOOTX64.EFI"), "EFI/BOOT/BOOTX64.EFI");
+    _ = esp.addCopyFile(b.path("boot/limine.conf"), "boot/limine/limine.conf");
+    _ = esp.addCopyFile(kernel.getEmittedBin(), "boot/kernel");
+
+    const qemu = b.addSystemCommand(&.{
+        "qemu-system-x86_64",
+        "-machine",
+        "q35",
+        "-m",
+        "512M",
+        "-no-reboot",
+        "-serial",
+        "stdio",
+        "-drive",
+        "if=pflash,format=raw,readonly=on,file=/usr/share/OVMF/OVMF_CODE_4M.fd",
+        "-drive",
+    });
+    qemu.addPrefixedDirectoryArg("if=virtio,readonly=on,format=raw,file=fat:", esp.getDirectory());
+    qemu.stdio = .inherit;
+    qemu.has_side_effects = true;
+    b.step("run", "Boot the kernel in QEMU").dependOn(&qemu.step);
 }

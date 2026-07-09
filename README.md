@@ -14,5 +14,11 @@ but first it has to boot.
 
 ## Building
 
-You need Zig 0.16.0 (see `.zigversion`). Build instructions will be here once
-there's something to build.
+You need Zig 0.16.0 (see `.zigversion`), QEMU and OVMF (UEFI firmware for
+QEMU, on Ubuntu `sudo apt install qemu-system-x86 ovmf`).
+
+```
+zig build run
+```
+
+Zig downloads Limine by itself on the first build.

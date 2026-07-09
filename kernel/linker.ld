@@ -37,6 +37,13 @@ SECTIONS
 
     . = ALIGN(CONSTANT(MAXPAGESIZE));
 
+    /* Limine requests, markers must stay around them in this order */
+    .limine_requests : {
+        KEEP(*(.limine_requests_start))
+        KEEP(*(.limine_requests))
+        KEEP(*(.limine_requests_end))
+    } :data
+
     .data : {
         *(.data .data.*)
     } :data
