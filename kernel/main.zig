@@ -1,6 +1,7 @@
 const std = @import("std");
 const serial = @import("serial.zig");
 const limine = @import("limine.zig");
+const fb = @import("fb.zig");
 
 // Limine jumps here in 64-bit mode with interrupts off.
 // Clear rbp (end of the stack trace), align the stack and call kmain.
@@ -20,6 +21,17 @@ export fn kmain() noreturn {
         hang();
     }
     serial.write("hello from teryqen!\n");
+
+    if (limine.framebuffer()) |info| {
+        if (fb.init(info)) |screen| {
+            screen.clear(screen.rgb(0x1c, 0x1f, 0x26));
+            screen.drawText(32, 32, "hello from teryqen!", screen.rgb(0xe6, 0xe8, 0xee), 4);
+        } else {
+            serial.write("framebuffer is not 32 bpp\n");
+        }
+    } else {
+        serial.write("no framebuffer\n");
+    }
     hang();
 }
 
