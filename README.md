@@ -22,3 +22,6 @@ zig build run
 ```
 
 Zig downloads Limine by itself on the first build.
+
+To debug, run `zig build debug` (QEMU waits for gdb) and in another terminal
+`gdb -x tools/gdb/kernel.gdb`.

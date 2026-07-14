@@ -55,6 +55,18 @@ pub fn build(b: *std.Build) void {
     _ = esp.addCopyFile(b.path("boot/limine.conf"), "boot/limine/limine.conf");
     _ = esp.addCopyFile(kernel.getEmittedBin(), "boot/kernel");
 
+    const run = qemuCommand(b, esp.getDirectory());
+    b.step("run", "Boot the kernel in QEMU").dependOn(&run.step);
+
+    // Same, but QEMU waits for gdb on port 1234 before running anything.
+    // Then: gdb -x tools/gdb/kernel.gdb
+    const debug = qemuCommand(b, esp.getDirectory());
+    debug.addArgs(&.{ "-s", "-S" });
+    debug.step.dependOn(b.getInstallStep()); // gdb reads zig-out/bin/kernel
+    b.step("debug", "Boot in QEMU and wait for gdb").dependOn(&debug.step);
+}
+
+fn qemuCommand(b: *std.Build, esp: std.Build.LazyPath) *std.Build.Step.Run {
     const qemu = b.addSystemCommand(&.{
         "qemu-system-x86_64",
         "-machine",
@@ -68,8 +80,8 @@ pub fn build(b: *std.Build) void {
         "if=pflash,format=raw,readonly=on,file=/usr/share/OVMF/OVMF_CODE_4M.fd",
         "-drive",
     });
-    qemu.addPrefixedDirectoryArg("if=virtio,readonly=on,format=raw,file=fat:", esp.getDirectory());
+    qemu.addPrefixedDirectoryArg("if=virtio,readonly=on,format=raw,file=fat:", esp);
     qemu.stdio = .inherit;
     qemu.has_side_effects = true;
-    b.step("run", "Boot the kernel in QEMU").dependOn(&qemu.step);
+    return qemu;
 }
