@@ -4,6 +4,10 @@
 "hello from teryqen!" on the serial port and draws it on the screen with
 my own little font. Then it halts.
 
+CPU exceptions go to my own handlers now (GDT + IDT). int3 returns, anything
+else prints the exception on serial and stops, instead of QEMU silently
+rebooting.
+
 `zig build debug` + `gdb -x tools/gdb/kernel.gdb` stops at kmain, can step
 through the kernel.
 
@@ -15,11 +19,14 @@ through the kernel.
 - [x] figure out how to draw text on the framebuffer
 - [ ] uppercase letters in the font
 - [x] debugging with gdb
-- [ ] GDT and IDT, so exceptions don't just reboot QEMU
+- [x] GDT and IDT, so exceptions don't just reboot QEMU
+- [ ] print registers when an exception happens (and the page fault address)
+- [ ] memory map from Limine, physical page allocator
 
 ## Notes / things to read up on
 
 - higher half kernel, linker scripts
 - QEMU serves the boot folder as a fake FAT disk (`fat:`), fine for now but
   at some point I need a real disk image
+- TSS + user segments in the GDT: needed for user mode, not yet
 - KASLR is off (boot/limine.conf) because of gdb, turn it back on later

@@ -2,6 +2,8 @@ const std = @import("std");
 const serial = @import("serial.zig");
 const limine = @import("limine.zig");
 const fb = @import("fb.zig");
+const gdt = @import("gdt.zig");
+const idt = @import("idt.zig");
 
 // Limine jumps here in 64-bit mode with interrupts off.
 // Clear rbp (end of the stack trace), align the stack and call kmain.
@@ -16,11 +18,17 @@ export fn _start() callconv(.naked) noreturn {
 
 export fn kmain() noreturn {
     serial.init();
+    gdt.init();
+    idt.init();
     if (!limine.supported()) {
         serial.write("bootloader too old?\n");
         hang();
     }
     serial.write("hello from teryqen!\n");
+
+    // check that interrupts come back: int3 should land in the handler and return
+    asm volatile ("int3");
+    serial.write("survived int3\n");
 
     if (limine.framebuffer()) |info| {
         if (fb.init(info)) |screen| {
