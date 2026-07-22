@@ -5,8 +5,10 @@
 my own little font. Then it halts.
 
 CPU exceptions go to my own handlers now (GDT + IDT). int3 returns, anything
-else prints the exception on serial and stops, instead of QEMU silently
-rebooting.
+else prints the exception and all registers on serial and stops, instead
+of QEMU silently rebooting. Page faults also show the address.
+
+Logging goes through std.log to serial (log.info, log.err...).
 
 `zig build debug` + `gdb -x tools/gdb/kernel.gdb` stops at kmain, can step
 through the kernel.
@@ -20,8 +22,10 @@ through the kernel.
 - [ ] uppercase letters in the font
 - [x] debugging with gdb
 - [x] GDT and IDT, so exceptions don't just reboot QEMU
-- [ ] print registers when an exception happens (and the page fault address)
+- [x] print registers when an exception happens (and the page fault address)
+- [x] std.log on serial
 - [ ] memory map from Limine, physical page allocator
+- [ ] stack trace on panic
 
 ## Notes / things to read up on
 

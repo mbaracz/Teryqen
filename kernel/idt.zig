@@ -8,6 +8,8 @@
 const std = @import("std");
 const gdt = @import("gdt.zig");
 
+const log = std.log.scoped(.cpu);
+
 const names = [32][]const u8{
     "divide error",   "debug",               "NMI",            "breakpoint",
     "overflow",       "bound range",         "invalid opcode", "device not available",
@@ -141,7 +143,25 @@ export fn interruptCommon() callconv(.naked) void {
 export fn handleException(frame: *Frame) callconv(.c) void {
     // breakpoint (int3) is harmless, just continue after it
     if (frame.vector == 3) return;
-    std.debug.panic("exception {d} ({s}), error code 0x{x}, rip 0x{x}", .{
-        frame.vector, names[frame.vector], frame.error_code, frame.rip,
+    dumpRegisters(frame);
+    std.debug.panic("exception {d} ({s}), error code 0x{x}", .{
+        frame.vector, names[frame.vector], frame.error_code,
     });
+}
+
+fn dumpRegisters(f: *const Frame) void {
+    if (f.vector == 14) {
+        // page fault: cr2 has the address that was accessed
+        const cr2 = asm volatile ("movq %%cr2, %[out]"
+            : [out] "=r" (-> u64),
+        );
+        const what = if (f.error_code & 0x10 != 0) "executing" else if (f.error_code & 0x2 != 0) "writing" else "reading";
+        const why = if (f.error_code & 0x1 != 0) "page protection" else "page not mapped";
+        log.err("page fault {s} 0x{x}: {s}", .{ what, cr2, why });
+    }
+    log.err("rip {x:0>16} rsp {x:0>16} rflags {x}", .{ f.rip, f.rsp, f.rflags });
+    log.err("rax {x:0>16} rbx {x:0>16} rcx {x:0>16} rdx {x:0>16}", .{ f.rax, f.rbx, f.rcx, f.rdx });
+    log.err("rsi {x:0>16} rdi {x:0>16} rbp {x:0>16} r8  {x:0>16}", .{ f.rsi, f.rdi, f.rbp, f.r8 });
+    log.err("r9  {x:0>16} r10 {x:0>16} r11 {x:0>16} r12 {x:0>16}", .{ f.r9, f.r10, f.r11, f.r12 });
+    log.err("r13 {x:0>16} r14 {x:0>16} r15 {x:0>16}", .{ f.r13, f.r14, f.r15 });
 }
