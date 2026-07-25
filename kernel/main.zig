@@ -59,11 +59,40 @@ fn hang() noreturn {
     }
 }
 
+var panicking = false;
+
 fn panicHandler(msg: []const u8, first_trace_addr: ?usize) noreturn {
-    _ = first_trace_addr;
+    asm volatile ("cli");
+    // if printing the backtrace itself crashes, don't loop forever
+    if (panicking) {
+        serial.write("PANIC inside panic: ");
+        serial.write(msg);
+        serial.write("\n");
+        hang();
+    }
+    panicking = true;
+
     serial.write("PANIC: ");
     serial.write(msg);
     serial.write("\n");
+
+    var buf: [64]u8 = undefined;
+    if (first_trace_addr) |addr| {
+        serial.write(std.fmt.bufPrint(&buf, "  at 0x{x}\n", .{addr}) catch "");
+    }
+    // Walk the frame pointers: every frame starts with [saved rbp, return address].
+    // _start sets rbp to 0, that's where it ends.
+    // Turn the addresses into function names with:
+    //   addr2line -f -e zig-out/bin/kernel <address>
+    var rbp = @frameAddress();
+    var i: usize = 0;
+    while (rbp != 0 and rbp % 8 == 0 and i < 20) : (i += 1) {
+        const frame: *const [2]usize = @ptrFromInt(rbp);
+        if (frame[1] == 0) break;
+        serial.write(std.fmt.bufPrint(&buf, "  #{d} 0x{x}\n", .{ i, frame[1] }) catch "");
+        if (frame[0] <= rbp) break; // stack goes up, anything else is garbage
+        rbp = frame[0];
+    }
     hang();
 }
 

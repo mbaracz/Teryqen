@@ -25,3 +25,10 @@ Zig downloads Limine by itself on the first build.
 
 To debug, run `zig build debug` (QEMU waits for gdb) and in another terminal
 `gdb -x tools/gdb/kernel.gdb`.
+
+When the kernel panics it prints a backtrace with raw addresses. To see which
+functions they are:
+
+```
+addr2line -f -e zig-out/bin/kernel 0xffffffff80001234
+```
