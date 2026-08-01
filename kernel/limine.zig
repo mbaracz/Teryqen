@@ -36,9 +36,40 @@ pub const Framebuffer = extern struct {
     edid: ?*anyopaque,
 };
 
+const HhdmRequest = extern struct {
+    id: [4]u64 = .{ 0xc7b1dd30df4c8b88, 0x0a82e883a194f07b, 0x48dcf1cb8ad2b852, 0x63984e959a98244b },
+    revision: u64 = 0,
+    response: ?*const HhdmResponse = null,
+};
+
+const HhdmResponse = extern struct {
+    revision: u64,
+    offset: u64,
+};
+
+const MemmapRequest = extern struct {
+    id: [4]u64 = .{ 0xc7b1dd30df4c8b88, 0x0a82e883a194f07b, 0x67cf3d9d378a806f, 0xe304acdfc50c3c62 },
+    revision: u64 = 0,
+    response: ?*const MemmapResponse = null,
+};
+
+const MemmapResponse = extern struct {
+    revision: u64,
+    entry_count: u64,
+    entries: [*]const *const MemmapEntry,
+};
+
+pub const MemmapEntry = extern struct {
+    base: u64,
+    length: u64,
+    type: u64, // 0 = usable, the rest I don't touch
+};
+
 export var requests_start linksection(".limine_requests_start") = [4]u64{ 0xf6b8f4b39de7d1ae, 0xfab91a6940fcb9cf, 0x785c6ed015d3e316, 0x181e920a7852b9d9 };
 export var base_revision linksection(".limine_requests") = BaseRevision{};
 export var framebuffer_request linksection(".limine_requests") = FramebufferRequest{};
+export var hhdm_request linksection(".limine_requests") = HhdmRequest{};
+export var memmap_request linksection(".limine_requests") = MemmapRequest{};
 export var requests_end linksection(".limine_requests_end") = [2]u64{ 0xadc0e0531bb10d03, 0x9572709f31764c62 };
 
 /// Limine sets revision to 0 if it supports the revision we asked for.
@@ -52,4 +83,18 @@ pub fn framebuffer() ?*const Framebuffer {
     const response = request.response orelse return null;
     if (response.framebuffer_count == 0) return null;
     return response.framebuffers[0];
+}
+
+/// Limine maps all physical memory at this offset (the "higher half direct
+/// map"), so physical address p can be read at hhdm + p.
+pub fn hhdmOffset() ?u64 {
+    const request: *const volatile HhdmRequest = &hhdm_request;
+    const response = request.response orelse return null;
+    return response.offset;
+}
+
+pub fn memoryMap() ?[]const *const MemmapEntry {
+    const request: *const volatile MemmapRequest = &memmap_request;
+    const response = request.response orelse return null;
+    return response.entries[0..response.entry_count];
 }

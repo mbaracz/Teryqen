@@ -4,6 +4,7 @@ const limine = @import("limine.zig");
 const fb = @import("fb.zig");
 const gdt = @import("gdt.zig");
 const idt = @import("idt.zig");
+const pmm = @import("pmm.zig");
 
 pub const std_options: std.Options = .{
     .logFn = @import("log.zig").logFn,
@@ -35,6 +36,21 @@ export fn kmain() noreturn {
     // check that interrupts come back: int3 should land in the handler and return
     asm volatile ("int3");
     log.debug("survived int3", .{});
+
+    pmm.init();
+    // quick check: grab a few frames, write to them, give them back
+    const before = pmm.freeCount();
+    var frames: [16]u64 = undefined;
+    for (&frames, 0..) |*f, i| {
+        f.* = pmm.alloc() orelse @panic("out of memory already?");
+        pmm.toVirt(u64, f.*).* = i;
+    }
+    for (frames, 0..) |f, i| {
+        if (pmm.toVirt(u64, f).* != i) @panic("frame memory doesn't keep what I wrote");
+        pmm.free(f);
+    }
+    if (pmm.freeCount() != before) @panic("frames got lost");
+    log.debug("pmm alloc/free ok", .{});
 
     if (limine.framebuffer()) |info| {
         log.info("framebuffer {d}x{d}", .{ info.width, info.height });

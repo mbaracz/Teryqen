@@ -11,6 +11,10 @@ of QEMU silently rebooting. Page faults also show the address.
 Logging goes through std.log to serial (log.info, log.err...). A panic
 prints a backtrace (addresses, addr2line turns them into function names).
 
+Physical memory: the kernel reads Limine's memory map and hands out 4 KiB
+frames from a bitmap (kernel/pmm.zig). Physical memory is reached through
+Limine's direct map (HHDM).
+
 `zig build debug` + `gdb -x tools/gdb/kernel.gdb` stops at kmain, can step
 through the kernel.
 
@@ -25,8 +29,11 @@ through the kernel.
 - [x] GDT and IDT, so exceptions don't just reboot QEMU
 - [x] print registers when an exception happens (and the page fault address)
 - [x] std.log on serial
-- [ ] memory map from Limine, physical page allocator
 - [x] stack trace on panic
+- [x] memory map from Limine, physical page allocator
+- [ ] my own page tables (right now I'm still on Limine's)
+- [ ] kernel heap, so I can use std.ArrayList etc.
+- [ ] timer interrupt
 
 ## Notes / things to read up on
 
@@ -34,4 +41,5 @@ through the kernel.
 - QEMU serves the boot folder as a fake FAT disk (`fat:`), fine for now but
   at some point I need a real disk image
 - TSS + user segments in the GDT: needed for user mode, not yet
+- bitmap allocator is slow (linear search), fine while nothing allocates much
 - KASLR is off (boot/limine.conf) because of gdb, turn it back on later
