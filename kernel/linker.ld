@@ -14,12 +14,15 @@ PHDRS
 SECTIONS
 {
     . = 0xffffffff80000000;
+    /* section boundaries, paging.zig maps each part with its own permissions */
+    __kernel_start = .;
 
     .text : {
         *(.text .text.*)
     } :text
 
     . = ALIGN(CONSTANT(MAXPAGESIZE));
+    __text_end = .;
 
     .rodata : {
         *(.rodata .rodata.*)
@@ -36,6 +39,7 @@ SECTIONS
     .got          : { *(.got) *(.got.plt) }            :rodata
 
     . = ALIGN(CONSTANT(MAXPAGESIZE));
+    __rodata_end = .;
 
     /* Limine requests, markers must stay around them in this order */
     .limine_requests : {
@@ -52,6 +56,9 @@ SECTIONS
         *(.bss .bss.*)
         *(COMMON)
     } :data
+
+    . = ALIGN(CONSTANT(MAXPAGESIZE));
+    __kernel_end = .;
 
     /DISCARD/ : {
         *(.interp)

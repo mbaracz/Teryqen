@@ -65,11 +65,24 @@ pub const MemmapEntry = extern struct {
     type: u64, // 0 = usable, the rest I don't touch
 };
 
+const ExecutableAddressRequest = extern struct {
+    id: [4]u64 = .{ 0xc7b1dd30df4c8b88, 0x0a82e883a194f07b, 0x71ba76863cc55f63, 0xb2644a48c516a487 },
+    revision: u64 = 0,
+    response: ?*const ExecutableAddressResponse = null,
+};
+
+const ExecutableAddressResponse = extern struct {
+    revision: u64,
+    physical_base: u64,
+    virtual_base: u64,
+};
+
 export var requests_start linksection(".limine_requests_start") = [4]u64{ 0xf6b8f4b39de7d1ae, 0xfab91a6940fcb9cf, 0x785c6ed015d3e316, 0x181e920a7852b9d9 };
 export var base_revision linksection(".limine_requests") = BaseRevision{};
 export var framebuffer_request linksection(".limine_requests") = FramebufferRequest{};
 export var hhdm_request linksection(".limine_requests") = HhdmRequest{};
 export var memmap_request linksection(".limine_requests") = MemmapRequest{};
+export var executable_address_request linksection(".limine_requests") = ExecutableAddressRequest{};
 export var requests_end linksection(".limine_requests_end") = [2]u64{ 0xadc0e0531bb10d03, 0x9572709f31764c62 };
 
 /// Limine sets revision to 0 if it supports the revision we asked for.
@@ -97,4 +110,11 @@ pub fn memoryMap() ?[]const *const MemmapEntry {
     const request: *const volatile MemmapRequest = &memmap_request;
     const response = request.response orelse return null;
     return response.entries[0..response.entry_count];
+}
+
+/// Where in physical memory Limine loaded the kernel, and where it's mapped.
+pub fn kernelAddress() ?ExecutableAddressResponse {
+    const request: *const volatile ExecutableAddressRequest = &executable_address_request;
+    const response = request.response orelse return null;
+    return response.*;
 }

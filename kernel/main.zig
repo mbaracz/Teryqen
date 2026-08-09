@@ -5,6 +5,7 @@ const fb = @import("fb.zig");
 const gdt = @import("gdt.zig");
 const idt = @import("idt.zig");
 const pmm = @import("pmm.zig");
+const paging = @import("paging.zig");
 
 pub const std_options: std.Options = .{
     .logFn = @import("log.zig").logFn,
@@ -51,6 +52,8 @@ export fn kmain() noreturn {
     }
     if (pmm.freeCount() != before) @panic("frames got lost");
     log.debug("pmm alloc/free ok", .{});
+
+    paging.init();
 
     if (limine.framebuffer()) |info| {
         log.info("framebuffer {d}x{d}", .{ info.width, info.height });

@@ -15,6 +15,10 @@ Physical memory: the kernel reads Limine's memory map and hands out 4 KiB
 frames from a bitmap (kernel/pmm.zig). Physical memory is reached through
 Limine's direct map (HHDM).
 
+The kernel runs on its own page tables now (kernel/paging.zig): code is
+read+execute, rodata read only, data read+write, and nothing is writable and
+executable at the same time. Writing to kernel code page faults.
+
 `zig build debug` + `gdb -x tools/gdb/kernel.gdb` stops at kmain, can step
 through the kernel.
 
@@ -31,7 +35,7 @@ through the kernel.
 - [x] std.log on serial
 - [x] stack trace on panic
 - [x] memory map from Limine, physical page allocator
-- [ ] my own page tables (right now I'm still on Limine's)
+- [x] my own page tables
 - [ ] kernel heap, so I can use std.ArrayList etc.
 - [ ] timer interrupt
 
@@ -42,4 +46,6 @@ through the kernel.
   at some point I need a real disk image
 - TSS + user segments in the GDT: needed for user mode, not yet
 - bitmap allocator is slow (linear search), fine while nothing allocates much
+- framebuffer is mapped like normal memory, write-combining would be faster
+  (needs PAT)
 - KASLR is off (boot/limine.conf) because of gdb, turn it back on later
