@@ -6,6 +6,7 @@ const gdt = @import("gdt.zig");
 const idt = @import("idt.zig");
 const pmm = @import("pmm.zig");
 const paging = @import("paging.zig");
+const heap = @import("heap.zig");
 
 pub const std_options: std.Options = .{
     .logFn = @import("log.zig").logFn,
@@ -54,6 +55,7 @@ export fn kmain() noreturn {
     log.debug("pmm alloc/free ok", .{});
 
     paging.init();
+    testHeap();
 
     if (limine.framebuffer()) |info| {
         log.info("framebuffer {d}x{d}", .{ info.width, info.height });
@@ -67,6 +69,22 @@ export fn kmain() noreturn {
         log.warn("no framebuffer", .{});
     }
     hang();
+}
+
+// try out the heap with a growing list and a big buffer
+fn testHeap() void {
+    const free_before = pmm.freeCount();
+    var list: std.ArrayList(u64) = .empty;
+    for (0..10_000) |i| list.append(heap.allocator, i) catch @panic("heap: out of memory");
+    var sum: u64 = 0;
+    for (list.items) |x| sum += x;
+    if (sum != 10_000 * 9_999 / 2) @panic("heap: list is broken");
+    list.deinit(heap.allocator);
+
+    const big = heap.allocator.alloc(u8, 100_000) catch @panic("heap: no big buffer");
+    @memset(big, 0xab);
+    heap.allocator.free(big);
+    log.debug("heap ok, {d} frames kept (small pieces + page tables)", .{free_before - pmm.freeCount()});
 }
 
 fn hang() noreturn {

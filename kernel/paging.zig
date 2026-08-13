@@ -46,6 +46,27 @@ pub fn map(virt: u64, phys: u64, flags: u64) void {
     entry.* = (phys & ADDRESS_MASK) | flags | PRESENT;
 }
 
+/// Removes the mapping of one page and returns the physical address it had.
+pub fn unmap(virt: u64) u64 {
+    var table = pmm.toVirt([512]u64, pml4);
+    var shift: u6 = 39;
+    while (shift > 12) : (shift -= 9) {
+        const entry = table[(virt >> shift) & 0x1ff];
+        if (entry & PRESENT == 0) @panic("unmap: page not mapped");
+        table = pmm.toVirt([512]u64, entry & ADDRESS_MASK);
+    }
+    const entry = &table[(virt >> 12) & 0x1ff];
+    if (entry.* & PRESENT == 0) @panic("unmap: page not mapped");
+    const phys = entry.* & ADDRESS_MASK;
+    entry.* = 0;
+    // the CPU may still remember the old mapping
+    asm volatile ("invlpg (%[virt])"
+        :
+        : [virt] "r" (virt),
+        : .{ .memory = true });
+    return phys;
+}
+
 fn mapRange(virt: u64, phys: u64, size: u64, flags: u64) void {
     var offset: u64 = 0;
     while (offset < size) : (offset += page_size) map(virt + offset, phys + offset, flags);

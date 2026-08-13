@@ -19,6 +19,9 @@ The kernel runs on its own page tables now (kernel/paging.zig): code is
 read+execute, rodata read only, data read+write, and nothing is writable and
 executable at the same time. Writing to kernel code page faults.
 
+There's a kernel heap (kernel/heap.zig) that is a std.mem.Allocator, so
+std.ArrayList works in the kernel.
+
 `zig build debug` + `gdb -x tools/gdb/kernel.gdb` stops at kmain, can step
 through the kernel.
 
@@ -36,7 +39,7 @@ through the kernel.
 - [x] stack trace on panic
 - [x] memory map from Limine, physical page allocator
 - [x] my own page tables
-- [ ] kernel heap, so I can use std.ArrayList etc.
+- [x] kernel heap, so I can use std.ArrayList etc.
 - [ ] timer interrupt
 
 ## Notes / things to read up on
@@ -46,6 +49,8 @@ through the kernel.
   at some point I need a real disk image
 - TSS + user segments in the GDT: needed for user mode, not yet
 - bitmap allocator is slow (linear search), fine while nothing allocates much
+- heap: pages cut into small pieces are never given back, and big
+  allocations never reuse virtual addresses. Fine for now.
 - framebuffer is mapped like normal memory, write-combining would be faster
   (needs PAT)
 - KASLR is off (boot/limine.conf) because of gdb, turn it back on later
