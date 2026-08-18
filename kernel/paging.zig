@@ -10,6 +10,7 @@
 const std = @import("std");
 const limine = @import("limine.zig");
 const pmm = @import("pmm.zig");
+const cpu = @import("cpu.zig");
 
 const log = std.log.scoped(.paging);
 
@@ -120,32 +121,12 @@ pub fn init() void {
     }
 
     // NX bit only works with EFER.NXE on
-    const efer = rdmsr(0xc0000080);
-    wrmsr(0xc0000080, efer | (1 << 11));
+    const efer = cpu.rdmsr(0xc0000080);
+    cpu.wrmsr(0xc0000080, efer | (1 << 11));
 
     asm volatile ("movq %[pml4], %%cr3"
         :
         : [pml4] "r" (pml4),
         : .{ .memory = true });
     log.info("own page tables active, direct map {d} MiB", .{pages * page_size / (1024 * 1024)});
-}
-
-fn rdmsr(msr: u32) u64 {
-    var low: u32 = undefined;
-    var high: u32 = undefined;
-    asm volatile ("rdmsr"
-        : [low] "={eax}" (low),
-          [high] "={edx}" (high),
-        : [msr] "{ecx}" (msr),
-    );
-    return @as(u64, high) << 32 | low;
-}
-
-fn wrmsr(msr: u32, value: u64) void {
-    asm volatile ("wrmsr"
-        :
-        : [msr] "{ecx}" (msr),
-          [low] "{eax}" (@as(u32, @truncate(value))),
-          [high] "{edx}" (@as(u32, @truncate(value >> 32))),
-    );
 }

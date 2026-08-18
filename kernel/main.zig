@@ -7,6 +7,7 @@ const idt = @import("idt.zig");
 const pmm = @import("pmm.zig");
 const paging = @import("paging.zig");
 const heap = @import("heap.zig");
+const timer = @import("timer.zig");
 
 pub const std_options: std.Options = .{
     .logFn = @import("log.zig").logFn,
@@ -57,18 +58,39 @@ export fn kmain() noreturn {
     paging.init();
     testHeap();
 
+    var screen: ?fb.Screen = null;
     if (limine.framebuffer()) |info| {
         log.info("framebuffer {d}x{d}", .{ info.width, info.height });
-        if (fb.init(info)) |screen| {
-            screen.clear(screen.rgb(0x1c, 0x1f, 0x26));
-            screen.drawText(32, 32, "hello from teryqen!", screen.rgb(0xe6, 0xe8, 0xee), 4);
+        screen = fb.init(info);
+        if (screen) |s| {
+            s.clear(s.rgb(0x1c, 0x1f, 0x26));
+            s.drawText(32, 32, "hello from teryqen!", s.rgb(0xe6, 0xe8, 0xee), 4);
         } else {
             log.err("framebuffer is {d} bpp, only 32 works", .{info.bpp});
         }
     } else {
         log.warn("no framebuffer", .{});
     }
-    hang();
+
+    timer.init();
+    asm volatile ("sti");
+    log.debug("interrupts on", .{});
+
+    // nothing to do yet: sleep until the next interrupt, show the uptime once a second
+    var shown: u64 = 0;
+    while (true) {
+        asm volatile ("hlt");
+        const seconds = timer.ticksSinceBoot() / timer.hz;
+        if (seconds == shown) continue;
+        shown = seconds;
+        if (seconds == 1) log.debug("1 second of ticks, timer works", .{});
+        if (screen) |s| {
+            var buf: [32]u8 = undefined;
+            const text = std.fmt.bufPrint(&buf, "up {d}s", .{seconds}) catch continue;
+            s.fillRect(32, 100, 400, 16, s.rgb(0x1c, 0x1f, 0x26)); // erase the old number
+            s.drawText(32, 100, text, s.rgb(0x8a, 0x90, 0x9c), 2);
+        }
+    }
 }
 
 // try out the heap with a growing list and a big buffer

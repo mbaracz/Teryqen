@@ -22,6 +22,10 @@ executable at the same time. Writing to kernel code page faults.
 There's a kernel heap (kernel/heap.zig) that is a std.mem.Allocator, so
 std.ArrayList works in the kernel.
 
+Timer: the local APIC (x2APIC mode) interrupts 100 times a second, measured
+against the PIT at boot. Interrupts are on; the kernel sleeps with hlt and
+shows the uptime on screen.
+
 `zig build debug` + `gdb -x tools/gdb/kernel.gdb` stops at kmain, can step
 through the kernel.
 
@@ -40,7 +44,9 @@ through the kernel.
 - [x] memory map from Limine, physical page allocator
 - [x] my own page tables
 - [x] kernel heap, so I can use std.ArrayList etc.
-- [ ] timer interrupt
+- [x] timer interrupt
+- [ ] kernel threads and switching between them
+- [ ] keyboard input
 
 ## Notes / things to read up on
 

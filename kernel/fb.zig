@@ -27,6 +27,12 @@ pub const Screen = struct {
         s.pixels[y * s.stride + x] = color;
     }
 
+    pub fn fillRect(s: Screen, x: usize, y: usize, w: usize, h: usize, color: u32) void {
+        for (y..y + h) |py| {
+            for (x..x + w) |px| s.putPixel(px, py, color);
+        }
+    }
+
     /// Draws text with every font pixel as a scale x scale square.
     pub fn drawText(s: Screen, x: usize, y: usize, text: []const u8, color: u32, scale: usize) void {
         for (text, 0..) |c, i| {

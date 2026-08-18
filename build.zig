@@ -71,6 +71,8 @@ fn qemuCommand(b: *std.Build, esp: std.Build.LazyPath) *std.Build.Step.Run {
         "qemu-system-x86_64",
         "-machine",
         "q35",
+        "-cpu",
+        "max", // the default CPU has no x2APIC
         "-m",
         "512M",
         "-no-reboot",

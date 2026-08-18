@@ -1,22 +1,11 @@
 // COM1 serial port. QEMU shows it in the terminal with -serial stdio.
 // No interrupts, just wait until the UART is ready and write the byte.
 
+const cpu = @import("cpu.zig");
+const outb = cpu.outb;
+const inb = cpu.inb;
+
 const com1: u16 = 0x3f8;
-
-fn outb(port: u16, value: u8) void {
-    asm volatile ("outb %[value], %[port]"
-        :
-        : [value] "{al}" (value),
-          [port] "N{dx}" (port),
-    );
-}
-
-fn inb(port: u16) u8 {
-    return asm volatile ("inb %[port], %[value]"
-        : [value] "={al}" (-> u8),
-        : [port] "N{dx}" (port),
-    );
-}
 
 pub fn init() void {
     outb(com1 + 1, 0x00); // interrupts off

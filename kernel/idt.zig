@@ -1,4 +1,4 @@
-// IDT for the 32 CPU exceptions. Before this, any exception (bad pointer,
+// IDT for the 32 CPU exceptions (+ the timer interrupt). Before this, any exception (bad pointer,
 // ud2...) made QEMU triple fault and reboot without saying anything.
 //
 // Every vector gets a small stub (generated at comptime) that pushes a fake
@@ -7,6 +7,7 @@
 
 const std = @import("std");
 const gdt = @import("gdt.zig");
+const timer = @import("timer.zig");
 
 const log = std.log.scoped(.cpu);
 
@@ -75,19 +76,22 @@ const Pointer = packed struct(u80) { limit: u16, base: u64 };
 
 pub fn init() void {
     @memset(std.mem.asBytes(&idt), 0);
-    inline for (0..32) |vector| {
-        const addr = @intFromPtr(&stub(vector));
-        idt[vector] = .{
-            .offset_low = @truncate(addr),
-            .offset_high = @truncate(addr >> 16),
-            .selector = gdt.kernel_code,
-        };
-    }
+    inline for (0..32) |vector| setGate(vector, @intFromPtr(&stub(vector)));
+    setGate(timer.vector, @intFromPtr(&stub(timer.vector)));
+    setGate(timer.spurious_vector, @intFromPtr(&stub(timer.spurious_vector)));
     const ptr = Pointer{ .limit = @sizeOf(@TypeOf(idt)) - 1, .base = @intFromPtr(&idt) };
     asm volatile ("lidt (%[ptr])"
         :
         : [ptr] "r" (&ptr),
         : .{ .memory = true });
+}
+
+fn setGate(vector: u8, addr: u64) void {
+    idt[vector] = .{
+        .offset_low = @truncate(addr),
+        .offset_high = @truncate(addr >> 16),
+        .selector = gdt.kernel_code,
+    };
 }
 
 fn stub(comptime vector: u8) fn () callconv(.naked) void {
@@ -141,8 +145,14 @@ export fn interruptCommon() callconv(.naked) void {
 }
 
 export fn handleException(frame: *Frame) callconv(.c) void {
-    // breakpoint (int3) is harmless, just continue after it
-    if (frame.vector == 3) return;
+    switch (frame.vector) {
+        timer.vector => return timer.onTick(),
+        // spurious interrupt from the APIC, nothing to do (and no EOI)
+        timer.spurious_vector => return,
+        // breakpoint (int3) is harmless, just continue after it
+        3 => return,
+        else => {},
+    }
     dumpRegisters(frame);
     std.debug.panic("exception {d} ({s}), error code 0x{x}", .{
         frame.vector, names[frame.vector], frame.error_code,
