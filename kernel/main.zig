@@ -8,6 +8,7 @@ const pmm = @import("pmm.zig");
 const paging = @import("paging.zig");
 const heap = @import("heap.zig");
 const timer = @import("timer.zig");
+const thread = @import("thread.zig");
 
 pub const std_options: std.Options = .{
     .logFn = @import("log.zig").logFn,
@@ -76,9 +77,14 @@ export fn kmain() noreturn {
     asm volatile ("sti");
     log.debug("interrupts on", .{});
 
+    // two threads taking turns
+    _ = thread.spawn(counter, 'a') catch @panic("can't start a thread");
+    _ = thread.spawn(counter, 'b') catch @panic("can't start a thread");
+
     // nothing to do yet: sleep until the next interrupt, show the uptime once a second
     var shown: u64 = 0;
     while (true) {
+        thread.yield();
         asm volatile ("hlt");
         const seconds = timer.ticksSinceBoot() / timer.hz;
         if (seconds == shown) continue;
@@ -91,6 +97,14 @@ export fn kmain() noreturn {
             s.drawText(32, 100, text, s.rgb(0x8a, 0x90, 0x9c), 2);
         }
     }
+}
+
+fn counter(name: usize) callconv(.c) noreturn {
+    for (1..4) |i| {
+        log.info("thread {d} ({c}): {d}", .{ thread.currentId(), @as(u8, @intCast(name)), i });
+        thread.yield();
+    }
+    thread.exit();
 }
 
 // try out the heap with a growing list and a big buffer

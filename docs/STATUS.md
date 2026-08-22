@@ -26,6 +26,9 @@ Timer: the local APIC (x2APIC mode) interrupts 100 times a second, measured
 against the PIT at boot. Interrupts are on; the kernel sleeps with hlt and
 shows the uptime on screen.
 
+Kernel threads (kernel/thread.zig): spawn, yield, exit, round robin. Only
+cooperative so far, a thread that never yields keeps the CPU forever.
+
 `zig build debug` + `gdb -x tools/gdb/kernel.gdb` stops at kmain, can step
 through the kernel.
 
@@ -45,7 +48,8 @@ through the kernel.
 - [x] my own page tables
 - [x] kernel heap, so I can use std.ArrayList etc.
 - [x] timer interrupt
-- [ ] kernel threads and switching between them
+- [x] kernel threads and switching between them
+- [ ] preemption: switch threads from the timer interrupt
 - [ ] keyboard input
 
 ## Notes / things to read up on
@@ -57,6 +61,7 @@ through the kernel.
 - bitmap allocator is slow (linear search), fine while nothing allocates much
 - heap: pages cut into small pieces are never given back, and big
   allocations never reuse virtual addresses. Fine for now.
+- thread stacks have no guard page, an overflow silently eats the heap
 - framebuffer is mapped like normal memory, write-combining would be faster
   (needs PAT)
 - KASLR is off (boot/limine.conf) because of gdb, turn it back on later
