@@ -9,6 +9,7 @@
 const std = @import("std");
 const pmm = @import("pmm.zig");
 const paging = @import("paging.zig");
+const cpu = @import("cpu.zig");
 
 const page_size = pmm.page_size;
 const sizes = [_]usize{ 16, 32, 64, 128, 256, 512, 1024, 2048 };
@@ -38,7 +39,11 @@ fn pageCount(len: usize) usize {
     return (len + page_size - 1) / page_size;
 }
 
+// Threads can be switched in the middle of alloc/free, so interrupts are off
+// while the free lists are touched. One CPU only, so that's enough of a lock.
 fn alloc(_: *anyopaque, len: usize, alignment: std.mem.Alignment, _: usize) ?[*]u8 {
+    const irq = cpu.disableInterrupts();
+    defer cpu.restoreInterrupts(irq);
     if (sizeClass(len, alignment)) |class| {
         if (free_lists[class] == null) refill(class) orelse return null;
         const node = free_lists[class].?;
@@ -68,6 +73,8 @@ fn refill(class: usize) ?void {
 }
 
 fn free(_: *anyopaque, memory: []u8, alignment: std.mem.Alignment, _: usize) void {
+    const irq = cpu.disableInterrupts();
+    defer cpu.restoreInterrupts(irq);
     if (sizeClass(memory.len, alignment)) |class| {
         const node: *FreeNode = @ptrCast(@alignCast(memory.ptr));
         node.next = free_lists[class];

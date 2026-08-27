@@ -73,7 +73,8 @@ fn countsPerMs() u32 {
 /// Called from the interrupt handler.
 pub fn onTick() void {
     ticks += 1;
-    cpu.wrmsr(EOI, 0);
+    cpu.wrmsr(EOI, 0); // before switching threads, or no more ticks would come
+    @import("thread.zig").onTick();
 }
 
 pub fn ticksSinceBoot() u64 {

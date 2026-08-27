@@ -77,7 +77,7 @@ export fn kmain() noreturn {
     asm volatile ("sti");
     log.debug("interrupts on", .{});
 
-    // two threads taking turns
+    // two threads taking turns (without asking)
     _ = thread.spawn(counter, 'a') catch @panic("can't start a thread");
     _ = thread.spawn(counter, 'b') catch @panic("can't start a thread");
 
@@ -99,10 +99,13 @@ export fn kmain() noreturn {
     }
 }
 
+// Never yields, just burns CPU between prints. Both threads still take
+// turns, because the timer switches them.
 fn counter(name: usize) callconv(.c) noreturn {
     for (1..4) |i| {
         log.info("thread {d} ({c}): {d}", .{ thread.currentId(), @as(u8, @intCast(name)), i });
-        thread.yield();
+        const until = timer.ticksSinceBoot() + 10;
+        while (timer.ticksSinceBoot() < until) {}
     }
     thread.exit();
 }

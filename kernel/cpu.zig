@@ -45,3 +45,20 @@ pub fn hasX2apic() bool {
         : .{ .ebx = true, .edx = true });
     return ecx & (1 << 21) != 0;
 }
+
+/// Turns interrupts off and returns whether they were on before, so
+/// restoreInterrupts() can put things back the way they were.
+pub fn disableInterrupts() bool {
+    const flags = asm volatile (
+        \\pushfq
+        \\popq %[flags]
+        \\cli
+        : [flags] "=r" (-> u64),
+        :
+        : .{ .memory = true });
+    return flags & (1 << 9) != 0; // IF
+}
+
+pub fn restoreInterrupts(were_on: bool) void {
+    if (were_on) asm volatile ("sti" ::: .{ .memory = true });
+}

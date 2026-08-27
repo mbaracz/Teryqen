@@ -1,5 +1,5 @@
-// Kernel threads, cooperative for now: a thread runs until it calls yield()
-// or exit(). Round robin over a simple queue.
+// Kernel threads with round robin over a simple queue. A thread runs until it
+// calls yield() or exit(), or until the timer decides its time slice is over.
 //
 // Switching: push the callee-saved registers (rbx, rbp, r12-r15) on the old
 // thread's stack, save its rsp, load the new thread's rsp, pop its registers,
@@ -7,16 +7,19 @@
 
 const std = @import("std");
 const heap = @import("heap.zig");
+const cpu = @import("cpu.zig");
 
 const log = std.log.scoped(.thread);
 
 const stack_size = 16 * 1024;
+const slice_ticks = 2; // 20 ms at 100 Hz
 
 pub const Thread = struct {
     id: u64,
     rsp: u64 = 0, // saved while not running
     stack: ?[]u8, // null for the boot thread, it runs on Limine's stack
     dead: bool = false,
+    ticks_left: u32 = slice_ticks,
     node: std.DoublyLinkedList.Node = .{},
 };
 
@@ -50,16 +53,16 @@ pub fn spawn(entry: *const fn (usize) callconv(.c) noreturn, arg: usize) !*Threa
 
     t.* = .{ .id = next_id, .rsp = top - 7 * 8, .stack = stack };
     next_id += 1;
-    asm volatile ("cli");
+    const irq = cpu.disableInterrupts();
     ready.append(&t.node);
-    asm volatile ("sti");
+    cpu.restoreInterrupts(irq);
     return t;
 }
 
 /// Let the next thread run. Comes back when it's our turn again.
 pub fn yield() void {
-    asm volatile ("cli");
-    defer asm volatile ("sti");
+    const irq = cpu.disableInterrupts();
+    defer cpu.restoreInterrupts(irq);
     const next = ready.popFirst() orelse return;
     ready.append(&current.node);
     switchTo(fromNode(next));
@@ -67,7 +70,7 @@ pub fn yield() void {
 }
 
 pub fn exit() noreturn {
-    asm volatile ("cli");
+    _ = cpu.disableInterrupts();
     if (current == &boot_thread) @panic("the boot thread can't exit");
     current.dead = true;
     dead.append(&current.node);
@@ -76,12 +79,25 @@ pub fn exit() noreturn {
     unreachable;
 }
 
+/// Called from the timer interrupt (interrupts are off there). When the
+/// current thread used up its slice and someone else is waiting, switch.
+/// The interrupted thread continues later where it was, through iretq.
+pub fn onTick() void {
+    if (current.ticks_left > 0) current.ticks_left -= 1;
+    if (current.ticks_left > 0) return;
+    const next = ready.popFirst() orelse return;
+    ready.append(&current.node);
+    switchTo(fromNode(next));
+    freeDead();
+}
+
 pub fn currentId() u64 {
     return current.id;
 }
 
 fn switchTo(next: *Thread) void {
     const prev = current;
+    next.ticks_left = slice_ticks;
     current = next;
     asm volatile ("callq switchStacks"
         :

@@ -26,8 +26,10 @@ Timer: the local APIC (x2APIC mode) interrupts 100 times a second, measured
 against the PIT at boot. Interrupts are on; the kernel sleeps with hlt and
 shows the uptime on screen.
 
-Kernel threads (kernel/thread.zig): spawn, yield, exit, round robin. Only
-cooperative so far, a thread that never yields keeps the CPU forever.
+Kernel threads (kernel/thread.zig): spawn, yield, exit, round robin. The
+timer switches threads every 20 ms, so a thread that never yields can't keep
+the CPU. Heap and pmm turn interrupts off while they work, so a switch in the
+middle can't break them.
 
 `zig build debug` + `gdb -x tools/gdb/kernel.gdb` stops at kmain, can step
 through the kernel.
@@ -49,7 +51,8 @@ through the kernel.
 - [x] kernel heap, so I can use std.ArrayList etc.
 - [x] timer interrupt
 - [x] kernel threads and switching between them
-- [ ] preemption: switch threads from the timer interrupt
+- [x] preemption: switch threads from the timer interrupt
+- [ ] sleeping threads (wait for N ticks without spinning)
 - [ ] keyboard input
 
 ## Notes / things to read up on
@@ -61,6 +64,8 @@ through the kernel.
 - bitmap allocator is slow (linear search), fine while nothing allocates much
 - heap: pages cut into small pieces are never given back, and big
   allocations never reuse virtual addresses. Fine for now.
+- "interrupts off" as a lock only works with one CPU, real spinlocks once
+  there's SMP
 - thread stacks have no guard page, an overflow silently eats the heap
 - framebuffer is mapped like normal memory, write-combining would be faster
   (needs PAT)

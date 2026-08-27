@@ -3,6 +3,7 @@
 
 const std = @import("std");
 const limine = @import("limine.zig");
+const cpu = @import("cpu.zig");
 
 const log = std.log.scoped(.pmm);
 
@@ -68,6 +69,8 @@ fn bit(f: u64) u8 {
 
 /// Physical address of a free frame, or null if we're out of memory.
 pub fn alloc() ?u64 {
+    const irq = cpu.disableInterrupts(); // see heap.zig
+    defer cpu.restoreInterrupts(irq);
     var f = next;
     while (f < frame_count) : (f += 1) {
         if (bitmap[f / 8] & bit(f) == 0) {
@@ -80,6 +83,8 @@ pub fn alloc() ?u64 {
 }
 
 pub fn free(phys: u64) void {
+    const irq = cpu.disableInterrupts();
+    defer cpu.restoreInterrupts(irq);
     const f = phys / page_size;
     if (phys % page_size != 0 or f >= frame_count) @panic("pmm: freeing a bad address");
     if (bitmap[f / 8] & bit(f) == 0) @panic("pmm: double free");
