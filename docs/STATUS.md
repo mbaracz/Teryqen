@@ -2,7 +2,7 @@
 
 `zig build run` boots the kernel in QEMU through Limine. It prints
 "hello from teryqen!" on the serial port and draws it on the screen with
-my own little font. Then it halts.
+my own little font.
 
 CPU exceptions go to my own handlers now (GDT + IDT). int3 returns, anything
 else prints the exception and all registers on serial and stops, instead
@@ -40,7 +40,7 @@ through the kernel.
 - [x] boot it with Limine in QEMU
 - [x] print something on serial
 - [x] figure out how to draw text on the framebuffer
-- [ ] uppercase letters in the font
+- [x] uppercase letters in the font (all printable ASCII now)
 - [x] debugging with gdb
 - [x] GDT and IDT, so exceptions don't just reboot QEMU
 - [x] print registers when an exception happens (and the page fault address)
@@ -53,7 +53,7 @@ through the kernel.
 - [x] kernel threads and switching between them
 - [x] preemption: switch threads from the timer interrupt
 - [ ] sleeping threads (wait for N ticks without spinning)
-- [ ] keyboard input
+- [ ] keyboard input + a text console on the screen
 
 ## Notes / things to read up on
 

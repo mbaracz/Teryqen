@@ -65,7 +65,7 @@ export fn kmain() noreturn {
         screen = fb.init(info);
         if (screen) |s| {
             s.clear(s.rgb(0x1c, 0x1f, 0x26));
-            s.drawText(32, 32, "hello from teryqen!", s.rgb(0xe6, 0xe8, 0xee), 4);
+            s.drawText(32, 32, "Hello from Teryqen!", s.rgb(0xe6, 0xe8, 0xee), 4);
         } else {
             log.err("framebuffer is {d} bpp, only 32 works", .{info.bpp});
         }
