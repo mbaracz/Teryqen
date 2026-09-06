@@ -31,6 +31,11 @@ timer switches threads every 20 ms, so a thread that never yields can't keep
 the CPU. Heap and pmm turn interrupts off while they work, so a switch in the
 middle can't break them.
 
+Keyboard + console: a thread polls the PS/2 keyboard, typed characters show
+up in a text console on the screen (kernel/console.zig) with a "> " prompt.
+Shift, Caps Lock and backspace work, the console scrolls. Enter just logs the
+line for now, there's nothing to run yet.
+
 `zig build debug` + `gdb -x tools/gdb/kernel.gdb` stops at kmain, can step
 through the kernel.
 
@@ -53,7 +58,9 @@ through the kernel.
 - [x] kernel threads and switching between them
 - [x] preemption: switch threads from the timer interrupt
 - [ ] sleeping threads (wait for N ticks without spinning)
-- [ ] keyboard input + a text console on the screen
+- [x] keyboard input + a text console on the screen
+- [ ] keyboard interrupt instead of polling (needs the I/O APIC -> ACPI tables)
+- [ ] user mode: run code in ring 3, syscalls
 
 ## Notes / things to read up on
 

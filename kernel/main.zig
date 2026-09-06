@@ -9,6 +9,8 @@ const paging = @import("paging.zig");
 const heap = @import("heap.zig");
 const timer = @import("timer.zig");
 const thread = @import("thread.zig");
+const console = @import("console.zig");
+const keyboard = @import("keyboard.zig");
 
 pub const std_options: std.Options = .{
     .logFn = @import("log.zig").logFn,
@@ -81,6 +83,12 @@ export fn kmain() noreturn {
     _ = thread.spawn(counter, 'a') catch @panic("can't start a thread");
     _ = thread.spawn(counter, 'b') catch @panic("can't start a thread");
 
+    if (screen) |s| {
+        console.init(s, 150);
+        console.write("Type something:\n> ");
+    }
+    _ = thread.spawn(keyboard.run, @intFromPtr(&onKey)) catch @panic("can't start the keyboard thread");
+
     // nothing to do yet: sleep until the next interrupt, show the uptime once a second
     var shown: u64 = 0;
     while (true) {
@@ -96,6 +104,29 @@ export fn kmain() noreturn {
             s.fillRect(32, 100, 400, 16, s.rgb(0x1c, 0x1f, 0x26)); // erase the old number
             s.drawText(32, 100, text, s.rgb(0x8a, 0x90, 0x9c), 2);
         }
+    }
+}
+
+var line: [128]u8 = undefined;
+var line_len: usize = 0;
+
+// Every key typed: show it, and on Enter log the whole line to serial.
+fn onKey(c: u8) void {
+    switch (c) {
+        '\n' => {
+            log.info("typed: {s}", .{line[0..line_len]});
+            line_len = 0;
+            console.write("\n> ");
+        },
+        0x08 => if (line_len > 0) {
+            line_len -= 1;
+            console.write(&.{c});
+        },
+        else => if (line_len < line.len) {
+            line[line_len] = c;
+            line_len += 1;
+            console.write(&.{c});
+        },
     }
 }
 
