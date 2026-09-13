@@ -2,6 +2,7 @@
 // Handles newline, backspace and scrolls when it reaches the bottom.
 
 const fb = @import("fb.zig");
+const cpu = @import("cpu.zig");
 const font = @import("font.zig");
 
 const scale = 2;
@@ -28,6 +29,9 @@ pub fn init(s: fb.Screen, y: usize) void {
 }
 
 pub fn write(text: []const u8) void {
+    // keyboard thread and user programs both write here
+    const irq = cpu.disableInterrupts();
+    defer cpu.restoreInterrupts(irq);
     drawCursor(bg);
     for (text) |c| put(c);
     drawCursor(fg);

@@ -40,6 +40,8 @@ pub fn map(virt: u64, phys: u64, flags: u64) void {
             // upper levels allow everything, the last level decides
             entry.* = newTable() | PRESENT | WRITABLE;
         }
+        // ring 3 can only reach a page if every level says USER
+        entry.* |= flags & USER;
         table = pmm.toVirt([512]u64, entry.* & ADDRESS_MASK);
     }
     const entry = &table[(virt >> 12) & 0x1ff];

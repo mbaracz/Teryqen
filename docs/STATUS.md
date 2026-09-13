@@ -36,6 +36,11 @@ up in a text console on the screen (kernel/console.zig) with a "> " prompt.
 Shift, Caps Lock and backspace work, the console scrolls. Enter just logs the
 line for now, there's nothing to run yet.
 
+User mode: a small test program (in kernel/syscall.zig) runs in ring 3 and
+calls the kernel with `syscall`: exit, write, yield. If a user program
+crashes, only it gets killed. It's mapped into the kernel's own page tables
+(lower half, USER pages), so only one program can run at a time.
+
 `zig build debug` + `gdb -x tools/gdb/kernel.gdb` stops at kmain, can step
 through the kernel.
 
@@ -60,17 +65,21 @@ through the kernel.
 - [ ] sleeping threads (wait for N ticks without spinning)
 - [x] keyboard input + a text console on the screen
 - [ ] keyboard interrupt instead of polling (needs the I/O APIC -> ACPI tables)
-- [ ] user mode: run code in ring 3, syscalls
+- [x] user mode: run code in ring 3, syscalls
+- [ ] own page tables per process
+- [ ] load real programs (ELF files) instead of a blob of asm
 
 ## Notes / things to read up on
 
 - higher half kernel, linker scripts
 - QEMU serves the boot folder as a fake FAT disk (`fat:`), fine for now but
   at some point I need a real disk image
-- TSS + user segments in the GDT: needed for user mode, not yet
 - bitmap allocator is slow (linear search), fine while nothing allocates much
 - heap: pages cut into small pieces are never given back, and big
   allocations never reuse virtual addresses. Fine for now.
+- syscall entry uses a global for the kernel stack, fine with one CPU
+- the kernel can read/write user memory freely, write() only checks that the
+  pointer is in the lower half
 - "interrupts off" as a lock only works with one CPU, real spinlocks once
   there's SMP
 - thread stacks have no guard page, an overflow silently eats the heap

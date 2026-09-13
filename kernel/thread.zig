@@ -8,6 +8,7 @@
 const std = @import("std");
 const heap = @import("heap.zig");
 const cpu = @import("cpu.zig");
+const syscall = @import("syscall.zig");
 
 const log = std.log.scoped(.thread);
 
@@ -99,6 +100,8 @@ fn switchTo(next: *Thread) void {
     const prev = current;
     next.ticks_left = slice_ticks;
     current = next;
+    // where the CPU goes when this thread enters the kernel from ring 3
+    if (next.stack) |stack| syscall.setKernelStack(@intFromPtr(stack.ptr) + stack.len);
     asm volatile ("callq switchStacks"
         :
         : [from] "{rdi}" (&prev.rsp),

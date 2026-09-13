@@ -11,6 +11,7 @@ const timer = @import("timer.zig");
 const thread = @import("thread.zig");
 const console = @import("console.zig");
 const keyboard = @import("keyboard.zig");
+const syscall = @import("syscall.zig");
 
 pub const std_options: std.Options = .{
     .logFn = @import("log.zig").logFn,
@@ -33,6 +34,7 @@ export fn kmain() noreturn {
     serial.init();
     gdt.init();
     idt.init();
+    syscall.init();
     if (!limine.supported()) {
         log.err("bootloader doesn't support Limine base revision 6", .{});
         hang();
@@ -85,8 +87,11 @@ export fn kmain() noreturn {
 
     if (screen) |s| {
         console.init(s, 150);
-        console.write("Type something:\n> ");
+        syscall.console_ready = true;
     }
+    _ = thread.spawn(syscall.runProgram, 0) catch @panic("can't start the user program");
+    while (timer.ticksSinceBoot() < 50) thread.yield(); // let it finish first
+    if (screen != null) console.write("Type something:\n> ");
     _ = thread.spawn(keyboard.run, @intFromPtr(&onKey)) catch @panic("can't start the keyboard thread");
 
     // nothing to do yet: sleep until the next interrupt, show the uptime once a second

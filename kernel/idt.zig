@@ -8,6 +8,7 @@
 const std = @import("std");
 const gdt = @import("gdt.zig");
 const timer = @import("timer.zig");
+const syscall = @import("syscall.zig");
 
 const log = std.log.scoped(.cpu);
 
@@ -152,6 +153,11 @@ export fn handleException(frame: *Frame) callconv(.c) void {
         // breakpoint (int3) is harmless, just continue after it
         3 => return,
         else => {},
+    }
+    if (frame.cs & 3 == 3) {
+        // a user program crashed, that's its problem, not the kernel's
+        log.err("user program: exception {d} ({s}) at rip 0x{x}, killing it", .{ frame.vector, names[frame.vector], frame.rip });
+        syscall.endProgram();
     }
     dumpRegisters(frame);
     std.debug.panic("exception {d} ({s}), error code 0x{x}", .{
