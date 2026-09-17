@@ -89,6 +89,8 @@ export fn kmain() noreturn {
         console.init(s, 150);
         syscall.console_ready = true;
     }
+    // two copies of the same program, at the same addresses, at the same time
+    _ = thread.spawn(syscall.runProgram, 0) catch @panic("can't start the user program");
     _ = thread.spawn(syscall.runProgram, 0) catch @panic("can't start the user program");
     while (timer.ticksSinceBoot() < 50) thread.yield(); // let it finish first
     if (screen != null) console.write("Type something:\n> ");

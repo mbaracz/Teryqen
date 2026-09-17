@@ -9,6 +9,7 @@ const std = @import("std");
 const heap = @import("heap.zig");
 const cpu = @import("cpu.zig");
 const syscall = @import("syscall.zig");
+const paging = @import("paging.zig");
 
 const log = std.log.scoped(.thread);
 
@@ -21,6 +22,7 @@ pub const Thread = struct {
     stack: ?[]u8, // null for the boot thread, it runs on Limine's stack
     dead: bool = false,
     ticks_left: u32 = slice_ticks,
+    address_space: u64 = 0, // PML4 of a user process, 0 = kernel only
     node: std.DoublyLinkedList.Node = .{},
 };
 
@@ -29,6 +31,7 @@ var current: *Thread = &boot_thread;
 var ready: std.DoublyLinkedList = .{};
 var dead: std.DoublyLinkedList = .{}; // freed later, a thread can't free its own stack
 var next_id: u64 = 1;
+var active_space: u64 = 0; // what's in cr3 right now (0 = kernel's)
 
 fn fromNode(node: *std.DoublyLinkedList.Node) *Thread {
     return @fieldParentPtr("node", node);
@@ -92,6 +95,25 @@ pub fn onTick() void {
     freeDead();
 }
 
+/// Gives the current thread its own page tables (0 = back to the kernel's)
+/// and switches to them.
+pub fn setAddressSpace(root: u64) void {
+    const irq = cpu.disableInterrupts();
+    defer cpu.restoreInterrupts(irq);
+    current.address_space = root;
+    activateSpace(root);
+}
+
+pub fn addressSpace() u64 {
+    return current.address_space;
+}
+
+fn activateSpace(root: u64) void {
+    if (root == active_space) return;
+    active_space = root;
+    paging.activate(if (root != 0) root else paging.kernelRoot());
+}
+
 pub fn currentId() u64 {
     return current.id;
 }
@@ -102,6 +124,9 @@ fn switchTo(next: *Thread) void {
     current = next;
     // where the CPU goes when this thread enters the kernel from ring 3
     if (next.stack) |stack| syscall.setKernelStack(@intFromPtr(stack.ptr) + stack.len);
+    // kernel threads don't care which page tables are loaded (the kernel half
+    // is the same everywhere), so only switch for threads with their own
+    if (next.address_space != 0) activateSpace(next.address_space);
     asm volatile ("callq switchStacks"
         :
         : [from] "{rdi}" (&prev.rsp),

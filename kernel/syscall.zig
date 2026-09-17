@@ -6,9 +6,8 @@
 // The CPU jumps to syscallEntry with the user's rsp still loaded, so the
 // entry first switches to the thread's kernel stack.
 //
-// For now all user programs live in the kernel's page tables (lower half,
-// pages marked USER). Every program at the same address, so only one can run
-// at a time. Own address space per process comes later.
+// Every program gets its own address space (paging.newAddressSpace), so they
+// can all use the same addresses without seeing each other.
 
 const std = @import("std");
 const cpu = @import("cpu.zig");
@@ -124,12 +123,21 @@ comptime {
         \\    leaq .Luser_msg(%rip), %rdi
         \\    movl $(.Luser_msg_end - .Luser_msg), %esi
         \\    syscall
+        // put the counter on the stack, let the other programs run, check it's
+        // still there: same address in every program, but not the same memory
+        \\    movq %r12, -8(%rsp)
         \\    movl $2, %eax
         \\    syscall
+        \\    cmpq %r12, -8(%rsp)
+        \\    jne 2f
         \\    decq %r12
         \\    jnz 1b
         \\    movl $0, %eax
         \\    xorl %edi, %edi
+        \\    syscall
+        \\2:
+        \\    movl $0, %eax
+        \\    movl $1, %edi
         \\    syscall
         \\.Luser_msg:
         \\    .ascii "Hello from ring 3!\n"
@@ -145,11 +153,13 @@ extern const user_program_end: u8;
 pub fn runProgram(_: usize) callconv(.c) noreturn {
     const code = @as([*]const u8, @ptrCast(&user_program_start))[0 .. @intFromPtr(&user_program_end) - @intFromPtr(&user_program_start)];
 
+    const space = paging.newAddressSpace();
+    thread.setAddressSpace(space);
     const code_frame = pmm.alloc() orelse @panic("no memory for the user program");
     @memcpy(pmm.toVirt([4096]u8, code_frame)[0..code.len], code);
-    paging.map(code_address, code_frame, paging.USER); // read + execute
+    paging.mapIn(space, code_address, code_frame, paging.USER); // read + execute
     const stack_frame = pmm.alloc() orelse @panic("no memory for the user stack");
-    paging.map(stack_address, stack_frame, paging.USER | paging.WRITABLE | paging.NO_EXECUTE);
+    paging.mapIn(space, stack_address, stack_frame, paging.USER | paging.WRITABLE | paging.NO_EXECUTE);
 
     log.debug("thread {d}: entering ring 3", .{thread.currentId()});
     // iretq pops rip, cs, rflags, rsp, ss. Interrupts on (0x202) in user mode.
@@ -169,9 +179,11 @@ pub fn runProgram(_: usize) callconv(.c) noreturn {
     unreachable;
 }
 
-/// The program is done (exit or crash): give its pages back, end the thread.
+/// The program is done (exit or crash): free its whole address space, end
+/// the thread.
 pub fn endProgram() noreturn {
-    pmm.free(paging.unmap(code_address));
-    pmm.free(paging.unmap(stack_address));
+    const space = thread.addressSpace();
+    thread.setAddressSpace(0); // can't free the page tables we're running on
+    paging.freeAddressSpace(space);
     thread.exit();
 }

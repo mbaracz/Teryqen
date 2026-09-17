@@ -38,8 +38,9 @@ line for now, there's nothing to run yet.
 
 User mode: a small test program (in kernel/syscall.zig) runs in ring 3 and
 calls the kernel with `syscall`: exit, write, yield. If a user program
-crashes, only it gets killed. It's mapped into the kernel's own page tables
-(lower half, USER pages), so only one program can run at a time.
+crashes, only it gets killed. Every program has its own page tables (the
+kernel half is shared), two copies of the test program run side by side at
+the same addresses.
 
 `zig build debug` + `gdb -x tools/gdb/kernel.gdb` stops at kmain, can step
 through the kernel.
@@ -66,7 +67,7 @@ through the kernel.
 - [x] keyboard input + a text console on the screen
 - [ ] keyboard interrupt instead of polling (needs the I/O APIC -> ACPI tables)
 - [x] user mode: run code in ring 3, syscalls
-- [ ] own page tables per process
+- [x] own page tables per process
 - [ ] load real programs (ELF files) instead of a blob of asm
 
 ## Notes / things to read up on
