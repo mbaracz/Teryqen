@@ -46,6 +46,27 @@ pub fn build(b: *std.Build) void {
 
     b.installArtifact(kernel);
 
+    // User programs. Same CPU features as the kernel: it doesn't save
+    // SSE registers on a thread switch either. The kernel gets the ELF file
+    // built in (@embedFile), there's no filesystem yet.
+    const hello = b.addExecutable(.{
+        .name = "hello",
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("programs/hello.zig"),
+            .target = target,
+            .optimize = optimize,
+            .red_zone = false,
+            .stack_protector = false,
+            .unwind_tables = .none,
+        }),
+    });
+    hello.bundle_ubsan_rt = false;
+    hello.entry = .{ .symbol_name = "_start" };
+    hello.image_base = 0x400000;
+    hello.link_z_max_page_size = 0x1000; // segments start on their own pages
+    kernel.root_module.addAnonymousImport("hello.elf", .{ .root_source_file = hello.getEmittedBin() });
+    b.installArtifact(hello);
+
     // Folder that looks like an EFI partition: Limine + config + kernel.
     // QEMU can serve a plain folder as a FAT disk (fat:...), so no need
     // to make a real disk image yet.

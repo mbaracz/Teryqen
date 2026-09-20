@@ -36,11 +36,12 @@ up in a text console on the screen (kernel/console.zig) with a "> " prompt.
 Shift, Caps Lock and backspace work, the console scrolls. Enter just logs the
 line for now, there's nothing to run yet.
 
-User mode: a small test program (in kernel/syscall.zig) runs in ring 3 and
-calls the kernel with `syscall`: exit, write, yield. If a user program
+User mode: programs are written in Zig (programs/), built as normal ELF
+files and loaded by the kernel (kernel/elf.zig). They run in ring 3 and call
+the kernel with `syscall`: exit, write, yield (programs/sys.zig). If a user program
 crashes, only it gets killed. Every program has its own page tables (the
-kernel half is shared), two copies of the test program run side by side at
-the same addresses.
+kernel half is shared), two copies of hello.elf run side by side at the
+same addresses.
 
 `zig build debug` + `gdb -x tools/gdb/kernel.gdb` stops at kmain, can step
 through the kernel.
@@ -68,7 +69,10 @@ through the kernel.
 - [ ] keyboard interrupt instead of polling (needs the I/O APIC -> ACPI tables)
 - [x] user mode: run code in ring 3, syscalls
 - [x] own page tables per process
-- [ ] load real programs (ELF files) instead of a blob of asm
+- [x] load real programs (ELF files) instead of a blob of asm
+- [ ] a filesystem to load programs from (right now hello.elf is built into
+  the kernel with @embedFile)
+- [ ] a shell
 
 ## Notes / things to read up on
 
@@ -79,6 +83,8 @@ through the kernel.
 - heap: pages cut into small pieces are never given back, and big
   allocations never reuse virtual addresses. Fine for now.
 - syscall entry uses a global for the kernel stack, fine with one CPU
+- ELF loader: two segments on the same page make it panic ("page already
+  mapped"), my programs don't do that but a bad file could
 - the kernel can read/write user memory freely, write() only checks that the
   pointer is in the lower half
 - "interrupts off" as a lock only works with one CPU, real spinlocks once

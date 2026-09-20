@@ -23,6 +23,9 @@ zig build run
 
 Zig downloads Limine by itself on the first build.
 
+`kernel/` is the kernel, `programs/` are the user programs (built as ELF
+files and put into the kernel for now).
+
 To debug, run `zig build debug` (QEMU waits for gdb) and in another terminal
 `gdb -x tools/gdb/kernel.gdb`.
 

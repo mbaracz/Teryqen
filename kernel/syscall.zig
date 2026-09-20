@@ -17,6 +17,7 @@ const paging = @import("paging.zig");
 const thread = @import("thread.zig");
 const serial = @import("serial.zig");
 const console = @import("console.zig");
+const elf = @import("elf.zig");
 
 const log = std.log.scoped(.syscall);
 
@@ -25,8 +26,8 @@ const STAR = 0xc0000081;
 const LSTAR = 0xc0000082;
 const FMASK = 0xc0000084;
 
-const code_address: u64 = 0x40_0000;
-const stack_address: u64 = 0x7fff_ffff_e000; // one page, grows down from 0x7fff_ffff_f000
+const stack_top: u64 = 0x7fff_ffff_f000;
+const stack_pages = 4; // 16 KiB, std.fmt in Debug mode wants quite a bit
 
 // Used by syscallEntry. One CPU, so plain globals are fine.
 export var kernel_rsp: u64 = 0; // set on every thread switch
@@ -109,59 +110,24 @@ export fn handleSyscall(number: u64, a: u64, b: u64, c: u64) callconv(.c) u64 {
     }
 }
 
-// The test program. It's position independent (only rip-relative stuff), so
-// its bytes can just be copied to the user page.
-comptime {
-    asm (
-        \\.section .text
-        \\.global user_program_start
-        \\.global user_program_end
-        \\user_program_start:
-        \\    movq $3, %r12
-        \\1:
-        \\    movl $1, %eax
-        \\    leaq .Luser_msg(%rip), %rdi
-        \\    movl $(.Luser_msg_end - .Luser_msg), %esi
-        \\    syscall
-        // put the counter on the stack, let the other programs run, check it's
-        // still there: same address in every program, but not the same memory
-        \\    movq %r12, -8(%rsp)
-        \\    movl $2, %eax
-        \\    syscall
-        \\    cmpq %r12, -8(%rsp)
-        \\    jne 2f
-        \\    decq %r12
-        \\    jnz 1b
-        \\    movl $0, %eax
-        \\    xorl %edi, %edi
-        \\    syscall
-        \\2:
-        \\    movl $0, %eax
-        \\    movl $1, %edi
-        \\    syscall
-        \\.Luser_msg:
-        \\    .ascii "Hello from ring 3!\n"
-        \\.Luser_msg_end:
-        \\user_program_end:
-    );
-}
+const hello_elf = @embedFile("hello.elf");
 
-extern const user_program_start: u8;
-extern const user_program_end: u8;
-
-/// Thread entry: map the test program and its stack, then drop to ring 3.
+/// Thread entry: load programs/hello.zig into a new address space, give it a
+/// stack, then drop to ring 3.
 pub fn runProgram(_: usize) callconv(.c) noreturn {
-    const code = @as([*]const u8, @ptrCast(&user_program_start))[0 .. @intFromPtr(&user_program_end) - @intFromPtr(&user_program_start)];
-
     const space = paging.newAddressSpace();
     thread.setAddressSpace(space);
-    const code_frame = pmm.alloc() orelse @panic("no memory for the user program");
-    @memcpy(pmm.toVirt([4096]u8, code_frame)[0..code.len], code);
-    paging.mapIn(space, code_address, code_frame, paging.USER); // read + execute
-    const stack_frame = pmm.alloc() orelse @panic("no memory for the user stack");
-    paging.mapIn(space, stack_address, stack_frame, paging.USER | paging.WRITABLE | paging.NO_EXECUTE);
+    const entry = elf.load(space, hello_elf) catch |err| {
+        log.err("thread {d}: can't load hello.elf: {s}", .{ thread.currentId(), @errorName(err) });
+        endProgram();
+    };
+    for (1..stack_pages + 1) |i| {
+        const frame = pmm.alloc() orelse @panic("no memory for the user stack");
+        @memset(pmm.toVirt([4096]u8, frame), 0);
+        paging.mapIn(space, stack_top - i * 4096, frame, paging.USER | paging.WRITABLE | paging.NO_EXECUTE);
+    }
 
-    log.debug("thread {d}: entering ring 3", .{thread.currentId()});
+    log.debug("thread {d}: entering ring 3 at 0x{x}", .{ thread.currentId(), entry });
     // iretq pops rip, cs, rflags, rsp, ss. Interrupts on (0x202) in user mode.
     asm volatile (
         \\pushq %[ss]
@@ -172,9 +138,9 @@ pub fn runProgram(_: usize) callconv(.c) noreturn {
         \\iretq
         :
         : [ss] "r" (@as(u64, gdt.user_data)),
-          [rsp] "r" (stack_address + 4096),
+          [rsp] "r" (stack_top),
           [cs] "r" (@as(u64, gdt.user_code)),
-          [rip] "r" (code_address),
+          [rip] "r" (entry),
     );
     unreachable;
 }
