@@ -77,12 +77,32 @@ const ExecutableAddressResponse = extern struct {
     virtual_base: u64,
 };
 
+const ModuleRequest = extern struct {
+    id: [4]u64 = .{ 0xc7b1dd30df4c8b88, 0x0a82e883a194f07b, 0x3e7e279702be32af, 0xca1c4f3bd1280cee },
+    revision: u64 = 0,
+    response: ?*const ModuleResponse = null,
+};
+
+const ModuleResponse = extern struct {
+    revision: u64,
+    module_count: u64,
+    modules: [*]const *const File,
+};
+
+// Limine's file struct is longer, but I only need these.
+const File = extern struct {
+    revision: u64,
+    address: u64, // in the direct map
+    size: u64,
+};
+
 export var requests_start linksection(".limine_requests_start") = [4]u64{ 0xf6b8f4b39de7d1ae, 0xfab91a6940fcb9cf, 0x785c6ed015d3e316, 0x181e920a7852b9d9 };
 export var base_revision linksection(".limine_requests") = BaseRevision{};
 export var framebuffer_request linksection(".limine_requests") = FramebufferRequest{};
 export var hhdm_request linksection(".limine_requests") = HhdmRequest{};
 export var memmap_request linksection(".limine_requests") = MemmapRequest{};
 export var executable_address_request linksection(".limine_requests") = ExecutableAddressRequest{};
+export var module_request linksection(".limine_requests") = ModuleRequest{};
 export var requests_end linksection(".limine_requests_end") = [2]u64{ 0xadc0e0531bb10d03, 0x9572709f31764c62 };
 
 /// Limine sets revision to 0 if it supports the revision we asked for.
@@ -117,4 +137,13 @@ pub fn kernelAddress() ?ExecutableAddressResponse {
     const request: *const volatile ExecutableAddressRequest = &executable_address_request;
     const response = request.response orelse return null;
     return response.*;
+}
+
+/// The first module from limine.conf (the initramfs).
+pub fn module() ?[]const u8 {
+    const request: *const volatile ModuleRequest = &module_request;
+    const response = request.response orelse return null;
+    if (response.module_count == 0) return null;
+    const file = response.modules[0];
+    return @as([*]const u8, @ptrFromInt(file.address))[0..file.size];
 }

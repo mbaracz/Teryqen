@@ -18,6 +18,7 @@ const thread = @import("thread.zig");
 const serial = @import("serial.zig");
 const console = @import("console.zig");
 const elf = @import("elf.zig");
+const initramfs = @import("initramfs.zig");
 
 const log = std.log.scoped(.syscall);
 
@@ -110,15 +111,19 @@ export fn handleSyscall(number: u64, a: u64, b: u64, c: u64) callconv(.c) u64 {
     }
 }
 
-const hello_elf = @embedFile("hello.elf");
-
-/// Thread entry: load programs/hello.zig into a new address space, give it a
-/// stack, then drop to ring 3.
-pub fn runProgram(_: usize) callconv(.c) noreturn {
+/// Thread entry: load a program from the initramfs into a new address space,
+/// give it a stack, then drop to ring 3. `path` points to a []const u8 with
+/// the file name.
+pub fn runProgram(path: usize) callconv(.c) noreturn {
+    const name = @as(*const []const u8, @ptrFromInt(path)).*;
     const space = paging.newAddressSpace();
     thread.setAddressSpace(space);
-    const entry = elf.load(space, hello_elf) catch |err| {
-        log.err("thread {d}: can't load hello.elf: {s}", .{ thread.currentId(), @errorName(err) });
+    const file = initramfs.find(name) orelse {
+        log.err("thread {d}: no {s} in the initramfs", .{ thread.currentId(), name });
+        endProgram();
+    };
+    const entry = elf.load(space, file) catch |err| {
+        log.err("thread {d}: can't load {s}: {s}", .{ thread.currentId(), name, @errorName(err) });
         endProgram();
     };
     for (1..stack_pages + 1) |i| {

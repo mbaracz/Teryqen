@@ -47,8 +47,7 @@ pub fn build(b: *std.Build) void {
     b.installArtifact(kernel);
 
     // User programs. Same CPU features as the kernel: it doesn't save
-    // SSE registers on a thread switch either. The kernel gets the ELF file
-    // built in (@embedFile), there's no filesystem yet.
+    // SSE registers on a thread switch either.
     const hello = b.addExecutable(.{
         .name = "hello",
         .root_module = b.createModule(.{
@@ -64,8 +63,21 @@ pub fn build(b: *std.Build) void {
     hello.entry = .{ .symbol_name = "_start" };
     hello.image_base = 0x400000;
     hello.link_z_max_page_size = 0x1000; // segments start on their own pages
-    kernel.root_module.addAnonymousImport("hello.elf", .{ .root_source_file = hello.getEmittedBin() });
     b.installArtifact(hello);
+
+    // The initramfs: programs + a few files, packed into a cpio archive by a
+    // little tool that runs on the build machine.
+    const mkinitramfs = b.addExecutable(.{
+        .name = "mkinitramfs",
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("tools/mkinitramfs.zig"),
+            .target = b.graph.host,
+        }),
+    });
+    const pack = b.addRunArtifact(mkinitramfs);
+    const initramfs = pack.addOutputFileArg("initramfs.cpio");
+    pack.addPrefixedFileArg("bin/hello=", hello.getEmittedBin());
+    pack.addPrefixedFileArg("etc/motd=", b.path("initramfs/etc/motd"));
 
     // Folder that looks like an EFI partition: Limine + config + kernel.
     // QEMU can serve a plain folder as a FAT disk (fat:...), so no need
@@ -75,6 +87,7 @@ pub fn build(b: *std.Build) void {
     _ = esp.addCopyFile(limine.path("BOOTX64.EFI"), "EFI/BOOT/BOOTX64.EFI");
     _ = esp.addCopyFile(b.path("boot/limine.conf"), "boot/limine/limine.conf");
     _ = esp.addCopyFile(kernel.getEmittedBin(), "boot/kernel");
+    _ = esp.addCopyFile(initramfs, "boot/initramfs.cpio");
 
     const run = qemuCommand(b, esp.getDirectory());
     b.step("run", "Boot the kernel in QEMU").dependOn(&run.step);

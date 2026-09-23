@@ -37,7 +37,9 @@ Shift, Caps Lock and backspace work, the console scrolls. Enter just logs the
 line for now, there's nothing to run yet.
 
 User mode: programs are written in Zig (programs/), built as normal ELF
-files and loaded by the kernel (kernel/elf.zig). They run in ring 3 and call
+files, packed into an initramfs (cpio archive, tools/mkinitramfs.zig) that
+Limine loads next to the kernel, and loaded by the kernel from there
+(kernel/initramfs.zig, kernel/elf.zig). They run in ring 3 and call
 the kernel with `syscall`: exit, write, yield (programs/sys.zig). If a user program
 crashes, only it gets killed. Every program has its own page tables (the
 kernel half is shared), two copies of hello.elf run side by side at the
@@ -70,8 +72,8 @@ through the kernel.
 - [x] user mode: run code in ring 3, syscalls
 - [x] own page tables per process
 - [x] load real programs (ELF files) instead of a blob of asm
-- [ ] a filesystem to load programs from (right now hello.elf is built into
-  the kernel with @embedFile)
+- [x] initramfs to load programs from (read only, files looked up by name)
+- [ ] a real filesystem in memory (directories, writing files) + file syscalls
 - [ ] a shell
 
 ## Notes / things to read up on

@@ -12,6 +12,7 @@ const thread = @import("thread.zig");
 const console = @import("console.zig");
 const keyboard = @import("keyboard.zig");
 const syscall = @import("syscall.zig");
+const initramfs = @import("initramfs.zig");
 
 pub const std_options: std.Options = .{
     .logFn = @import("log.zig").logFn,
@@ -62,6 +63,7 @@ export fn kmain() noreturn {
 
     paging.init();
     testHeap();
+    initramfs.init();
 
     var screen: ?fb.Screen = null;
     if (limine.framebuffer()) |info| {
@@ -88,10 +90,11 @@ export fn kmain() noreturn {
     if (screen) |s| {
         console.init(s, 150);
         syscall.console_ready = true;
+        if (initramfs.find("etc/motd")) |motd| console.write(motd);
     }
     // two copies of the same program, at the same addresses, at the same time
-    _ = thread.spawn(syscall.runProgram, 0) catch @panic("can't start the user program");
-    _ = thread.spawn(syscall.runProgram, 0) catch @panic("can't start the user program");
+    _ = thread.spawn(syscall.runProgram, @intFromPtr(&hello_path)) catch @panic("can't start the user program");
+    _ = thread.spawn(syscall.runProgram, @intFromPtr(&hello_path)) catch @panic("can't start the user program");
     while (timer.ticksSinceBoot() < 50) thread.yield(); // let it finish first
     if (screen != null) console.write("Type something:\n> ");
     _ = thread.spawn(keyboard.run, @intFromPtr(&onKey)) catch @panic("can't start the keyboard thread");
@@ -113,6 +116,8 @@ export fn kmain() noreturn {
         }
     }
 }
+
+const hello_path: []const u8 = "bin/hello";
 
 var line: [128]u8 = undefined;
 var line_len: usize = 0;
