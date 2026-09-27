@@ -157,7 +157,7 @@ export fn handleException(frame: *Frame) callconv(.c) void {
     if (frame.cs & 3 == 3) {
         // a user program crashed, that's its problem, not the kernel's
         log.err("user program: exception {d} ({s}) at rip 0x{x}, killing it", .{ frame.vector, names[frame.vector], frame.rip });
-        syscall.endProgram();
+        syscall.endProgram(255);
     }
     dumpRegisters(frame);
     std.debug.panic("exception {d} ({s}), error code 0x{x}", .{

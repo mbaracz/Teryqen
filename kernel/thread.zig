@@ -23,6 +23,7 @@ pub const Thread = struct {
     dead: bool = false,
     ticks_left: u32 = slice_ticks,
     address_space: u64 = 0, // PML4 of a user process, 0 = kernel only
+    process: usize = 0, // syscall.zig keeps its *Process here
     node: std.DoublyLinkedList.Node = .{},
 };
 
@@ -112,6 +113,14 @@ fn activateSpace(root: u64) void {
     if (root == active_space) return;
     active_space = root;
     paging.activate(if (root != 0) root else paging.kernelRoot());
+}
+
+pub fn setProcess(p: usize) void {
+    current.process = p;
+}
+
+pub fn process() usize {
+    return current.process;
 }
 
 pub fn currentId() u64 {

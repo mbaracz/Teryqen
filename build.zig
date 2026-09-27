@@ -48,22 +48,7 @@ pub fn build(b: *std.Build) void {
 
     // User programs. Same CPU features as the kernel: it doesn't save
     // SSE registers on a thread switch either.
-    const hello = b.addExecutable(.{
-        .name = "hello",
-        .root_module = b.createModule(.{
-            .root_source_file = b.path("programs/hello.zig"),
-            .target = target,
-            .optimize = optimize,
-            .red_zone = false,
-            .stack_protector = false,
-            .unwind_tables = .none,
-        }),
-    });
-    hello.bundle_ubsan_rt = false;
-    hello.entry = .{ .symbol_name = "_start" };
-    hello.image_base = 0x400000;
-    hello.link_z_max_page_size = 0x1000; // segments start on their own pages
-    b.installArtifact(hello);
+    const programs = [_][]const u8{ "shell", "hello" };
 
     // The initramfs: programs + a few files, packed into a cpio archive by a
     // little tool that runs on the build machine.
@@ -76,7 +61,25 @@ pub fn build(b: *std.Build) void {
     });
     const pack = b.addRunArtifact(mkinitramfs);
     const initramfs = pack.addOutputFileArg("initramfs.cpio");
-    pack.addPrefixedFileArg("bin/hello=", hello.getEmittedBin());
+    for (programs) |name| {
+        const program = b.addExecutable(.{
+            .name = name,
+            .root_module = b.createModule(.{
+                .root_source_file = b.path(b.fmt("programs/{s}.zig", .{name})),
+                .target = target,
+                .optimize = optimize,
+                .red_zone = false,
+                .stack_protector = false,
+                .unwind_tables = .none,
+            }),
+        });
+        program.bundle_ubsan_rt = false;
+        program.entry = .{ .symbol_name = "_start" };
+        program.image_base = 0x400000;
+        program.link_z_max_page_size = 0x1000; // segments start on their own pages
+        b.installArtifact(program);
+        pack.addPrefixedFileArg(b.fmt("bin/{s}=", .{name}), program.getEmittedBin());
+    }
     pack.addPrefixedFileArg("etc/motd=", b.path("initramfs/etc/motd"));
 
     // Folder that looks like an EFI partition: Limine + config + kernel.

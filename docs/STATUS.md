@@ -31,10 +31,12 @@ timer switches threads every 20 ms, so a thread that never yields can't keep
 the CPU. Heap and pmm turn interrupts off while they work, so a switch in the
 middle can't break them.
 
-Keyboard + console: a thread polls the PS/2 keyboard, typed characters show
-up in a text console on the screen (kernel/console.zig) with a "> " prompt.
-Shift, Caps Lock and backspace work, the console scrolls. Enter just logs the
-line for now, there's nothing to run yet.
+Keyboard + console: a thread polls the PS/2 keyboard, the text console on the
+screen (kernel/console.zig) scrolls. Typed keys go to whoever calls read().
+
+There's a shell (programs/shell.zig)! It runs bin/<name> from the initramfs
+and waits for it to finish, plus `help` and `echo` built in. Syscalls now:
+exit, write, yield, read, spawn, wait.
 
 User mode: programs are written in Zig (programs/), built as normal ELF
 files, packed into an initramfs (cpio archive, tools/mkinitramfs.zig) that
@@ -42,8 +44,8 @@ Limine loads next to the kernel, and loaded by the kernel from there
 (kernel/initramfs.zig, kernel/elf.zig). They run in ring 3 and call
 the kernel with `syscall`: exit, write, yield (programs/sys.zig). If a user program
 crashes, only it gets killed. Every program has its own page tables (the
-kernel half is shared), two copies of hello.elf run side by side at the
-same addresses.
+kernel half is shared), so they all use the same addresses without seeing
+each other.
 
 `zig build debug` + `gdb -x tools/gdb/kernel.gdb` stops at kmain, can step
 through the kernel.
@@ -74,7 +76,9 @@ through the kernel.
 - [x] load real programs (ELF files) instead of a blob of asm
 - [x] initramfs to load programs from (read only, files looked up by name)
 - [ ] a real filesystem in memory (directories, writing files) + file syscalls
-- [ ] a shell
+- [x] a shell
+- [ ] more programs (ls, cat...) once there's a filesystem
+- [ ] waiting in read()/wait() without spinning (sleep until woken up)
 
 ## Notes / things to read up on
 

@@ -2,7 +2,8 @@
 //
 // A user program calls the kernel with the `syscall` instruction:
 //   rax = number, rdi/rsi/rdx = arguments, result comes back in rax.
-//   0 exit()   1 write(ptr, len)   2 yield()
+//   0 exit(code)         1 write(ptr, len)     2 yield()
+//   3 read(ptr, len)     4 spawn(ptr, len)     5 wait(pid)
 // The CPU jumps to syscallEntry with the user's rsp still loaded, so the
 // entry first switches to the thread's kernel stack.
 //
@@ -88,17 +89,17 @@ export fn syscallEntry() callconv(.naked) void {
     );
 }
 
+const failed = std.math.maxInt(u64);
+
 export fn handleSyscall(number: u64, a: u64, b: u64, c: u64) callconv(.c) u64 {
     _ = c;
     switch (number) {
         0 => {
-            log.info("thread {d}: program exited with {d}", .{ thread.currentId(), a });
-            endProgram();
+            log.debug("thread {d}: program exited with {d}", .{ thread.currentId(), a });
+            endProgram(a);
         },
         1 => {
-            // the pointer comes from the user, it has to point into user memory
-            if (a >= 0x8000_0000_0000 or b > 4096 or a + b > 0x8000_0000_0000) return std.math.maxInt(u64);
-            const text = @as([*]const u8, @ptrFromInt(a))[0..b];
+            const text = userSlice(a, b) orelse return failed;
             serial.write(text);
             if (console_ready) console.write(text);
             return b;
@@ -107,24 +108,98 @@ export fn handleSyscall(number: u64, a: u64, b: u64, c: u64) callconv(.c) u64 {
             thread.yield();
             return 0;
         },
-        else => return std.math.maxInt(u64),
+        3 => {
+            // waits until at least one key was typed
+            const buf = userSlice(a, b) orelse return failed;
+            if (buf.len == 0) return 0;
+            while (input_len == 0) thread.yield();
+            const n = @min(buf.len, input_len);
+            @memcpy(buf[0..n], input[0..n]);
+            std.mem.copyForwards(u8, input[0 .. input_len - n], input[n..input_len]);
+            input_len -= n;
+            return n;
+        },
+        4 => {
+            const name = userSlice(a, b) orelse return failed;
+            return spawn(name) orelse failed;
+        },
+        5 => {
+            if (a >= processes.len or !processes[a].used) return failed;
+            while (!processes[a].done) thread.yield();
+            const code = processes[a].exit_code;
+            processes[a].used = false;
+            return code;
+        },
+        else => return failed,
     }
 }
 
+/// The pointer comes from the user, it has to point into user memory.
+fn userSlice(ptr: u64, len: u64) ?[]u8 {
+    if (ptr >= user_end or len > 4096 or ptr + len > user_end) return null;
+    return @as([*]u8, @ptrFromInt(ptr))[0..len];
+}
+
+const user_end: u64 = 0x8000_0000_0000;
+
+// Keys typed, waiting for someone to read() them.
+var input: [256]u8 = undefined;
+var input_len: usize = 0;
+
+/// Called by the keyboard thread for every character.
+pub fn keyTyped(ch: u8) void {
+    const irq = cpu.disableInterrupts();
+    defer cpu.restoreInterrupts(irq);
+    if (input_len < input.len) {
+        input[input_len] = ch;
+        input_len += 1;
+    }
+}
+
+// Running programs. The pid is just the index here.
+const Process = struct {
+    used: bool = false,
+    done: bool = false,
+    exit_code: u64 = 0,
+    name: [64]u8 = undefined,
+    name_len: usize = 0,
+};
+var processes: [16]Process = @splat(.{});
+
+/// Starts the program `name` from the initramfs. Returns its pid.
+pub fn spawn(name: []const u8) ?u64 {
+    if (name.len > 64 or initramfs.find(name) == null) return null;
+    const irq = cpu.disableInterrupts();
+    defer cpu.restoreInterrupts(irq);
+    for (&processes, 0..) |*p, pid| {
+        if (p.used) continue;
+        // copy the name: the caller's memory isn't visible from the new thread
+        p.* = .{ .used = true, .name_len = name.len };
+        @memcpy(p.name[0..name.len], name);
+        _ = thread.spawn(runProgram, @intFromPtr(p)) catch {
+            p.used = false;
+            return null;
+        };
+        return pid;
+    }
+    return null; // table full
+}
+
 /// Thread entry: load a program from the initramfs into a new address space,
-/// give it a stack, then drop to ring 3. `path` points to a []const u8 with
-/// the file name.
-pub fn runProgram(path: usize) callconv(.c) noreturn {
-    const name = @as(*const []const u8, @ptrFromInt(path)).*;
+/// give it a stack, then drop to ring 3. `arg` is its *Process.
+fn runProgram(arg: usize) callconv(.c) noreturn {
+    const process: *Process = @ptrFromInt(arg);
+    thread.setProcess(arg);
+    const name = process.name[0..process.name_len];
     const space = paging.newAddressSpace();
     thread.setAddressSpace(space);
     const file = initramfs.find(name) orelse {
         log.err("thread {d}: no {s} in the initramfs", .{ thread.currentId(), name });
-        endProgram();
+        endProgram(failed);
     };
     const entry = elf.load(space, file) catch |err| {
         log.err("thread {d}: can't load {s}: {s}", .{ thread.currentId(), name, @errorName(err) });
-        endProgram();
+        endProgram(failed);
     };
     for (1..stack_pages + 1) |i| {
         const frame = pmm.alloc() orelse @panic("no memory for the user stack");
@@ -152,7 +227,12 @@ pub fn runProgram(path: usize) callconv(.c) noreturn {
 
 /// The program is done (exit or crash): free its whole address space, end
 /// the thread.
-pub fn endProgram() noreturn {
+pub fn endProgram(code: u64) noreturn {
+    if (thread.process() != 0) {
+        const p: *Process = @ptrFromInt(thread.process());
+        p.exit_code = code;
+        p.done = true;
+    }
     const space = thread.addressSpace();
     thread.setAddressSpace(0); // can't free the page tables we're running on
     paging.freeAddressSpace(space);

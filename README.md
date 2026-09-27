@@ -21,7 +21,8 @@ QEMU, on Ubuntu `sudo apt install qemu-system-x86 ovmf`).
 zig build run
 ```
 
-Zig downloads Limine by itself on the first build.
+Zig downloads Limine by itself on the first build. It boots into a small
+shell, type `help`.
 
 `kernel/` is the kernel, `programs/` are the user programs. They go into the
 initramfs together with the files in `initramfs/`; `tools/` has the program
