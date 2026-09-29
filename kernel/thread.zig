@@ -74,6 +74,31 @@ pub fn yield() void {
     freeDead();
 }
 
+/// Threads waiting for something (a key, a program to end...). They're not in
+/// the ready queue, so they get no CPU time until someone wakes them.
+pub const WaitQueue = struct {
+    list: std.DoublyLinkedList = .{},
+};
+
+/// Puts the current thread to sleep until wakeAll(queue). Call it with
+/// interrupts off, right after checking the thing you wait for; otherwise the
+/// wakeup could come between the check and the sleep, and never come again.
+pub fn sleepOn(queue: *WaitQueue) void {
+    std.debug.assert(!cpu.disableInterrupts());
+    if (current == &boot_thread) @panic("the boot thread can't sleep");
+    queue.list.append(&current.node);
+    const next = ready.popFirst() orelse @panic("no thread left to run");
+    switchTo(fromNode(next));
+    freeDead();
+}
+
+/// Makes every thread sleeping on `queue` ready again.
+pub fn wakeAll(queue: *WaitQueue) void {
+    const irq = cpu.disableInterrupts();
+    defer cpu.restoreInterrupts(irq);
+    while (queue.list.popFirst()) |node| ready.append(node);
+}
+
 pub fn exit() noreturn {
     _ = cpu.disableInterrupts();
     if (current == &boot_thread) @panic("the boot thread can't exit");

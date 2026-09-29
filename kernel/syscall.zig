@@ -112,7 +112,9 @@ export fn handleSyscall(number: u64, a: u64, b: u64, c: u64) callconv(.c) u64 {
             // waits until at least one key was typed
             const buf = userSlice(a, b) orelse return failed;
             if (buf.len == 0) return 0;
-            while (input_len == 0) thread.yield();
+            // interrupts are off in here, so nothing can sneak in between
+            // the check and the sleep
+            while (input_len == 0) thread.sleepOn(&input_waiters);
             const n = @min(buf.len, input_len);
             @memcpy(buf[0..n], input[0..n]);
             std.mem.copyForwards(u8, input[0 .. input_len - n], input[n..input_len]);
@@ -125,7 +127,7 @@ export fn handleSyscall(number: u64, a: u64, b: u64, c: u64) callconv(.c) u64 {
         },
         5 => {
             if (a >= processes.len or !processes[a].used) return failed;
-            while (!processes[a].done) thread.yield();
+            while (!processes[a].done) thread.sleepOn(&processes[a].waiters);
             const code = processes[a].exit_code;
             processes[a].used = false;
             return code;
@@ -145,6 +147,7 @@ const user_end: u64 = 0x8000_0000_0000;
 // Keys typed, waiting for someone to read() them.
 var input: [256]u8 = undefined;
 var input_len: usize = 0;
+var input_waiters: thread.WaitQueue = .{};
 
 /// Called by the keyboard thread for every character.
 pub fn keyTyped(ch: u8) void {
@@ -154,6 +157,7 @@ pub fn keyTyped(ch: u8) void {
         input[input_len] = ch;
         input_len += 1;
     }
+    thread.wakeAll(&input_waiters);
 }
 
 // Running programs. The pid is just the index here.
@@ -161,6 +165,7 @@ const Process = struct {
     used: bool = false,
     done: bool = false,
     exit_code: u64 = 0,
+    waiters: thread.WaitQueue = .{}, // threads in wait() for this one
     name: [64]u8 = undefined,
     name_len: usize = 0,
 };
@@ -232,6 +237,7 @@ pub fn endProgram(code: u64) noreturn {
         const p: *Process = @ptrFromInt(thread.process());
         p.exit_code = code;
         p.done = true;
+        thread.wakeAll(&p.waiters);
     }
     const space = thread.addressSpace();
     thread.setAddressSpace(0); // can't free the page tables we're running on

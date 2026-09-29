@@ -36,7 +36,8 @@ screen (kernel/console.zig) scrolls. Typed keys go to whoever calls read().
 
 There's a shell (programs/shell.zig)! It runs bin/<name> from the initramfs
 and waits for it to finish, plus `help` and `echo` built in. Syscalls now:
-exit, write, yield, read, spawn, wait.
+exit, write, yield, read, spawn, wait. A thread waiting in read() or wait()
+sleeps on a wait queue (thread.WaitQueue) and gets no CPU until it's woken.
 
 User mode: programs are written in Zig (programs/), built as normal ELF
 files, packed into an initramfs (cpio archive, tools/mkinitramfs.zig) that
@@ -78,7 +79,8 @@ through the kernel.
 - [ ] a real filesystem in memory (directories, writing files) + file syscalls
 - [x] a shell
 - [ ] more programs (ls, cat...) once there's a filesystem
-- [ ] waiting in read()/wait() without spinning (sleep until woken up)
+- [x] waiting in read()/wait() without spinning (sleep until woken up)
+- [ ] sleep(ms) syscall
 
 ## Notes / things to read up on
 
