@@ -1,6 +1,6 @@
 // Read-only access to the initramfs: a cpio "newc" archive that Limine loads
-// as a module (tools/mkinitramfs.zig makes it). No real filesystem yet, files
-// are just looked up by name in the archive.
+// as a module (tools/mkinitramfs.zig makes it). At boot fs.zig copies every
+// file from it into the in-memory filesystem.
 
 const std = @import("std");
 const limine = @import("limine.zig");
@@ -14,28 +14,31 @@ pub fn init() void {
     log.info("initramfs: {d} KiB", .{archive.len / 1024});
 }
 
-/// Contents of the file called `name`, or null if it isn't there (or the
-/// archive is broken).
-pub fn find(name: []const u8) ?[]const u8 {
-    var pos: usize = 0;
-    while (true) {
-        if (archive.len - pos < 110) return null;
-        const header = archive[pos..][0..110];
+pub const Entry = struct { name: []const u8, data: []const u8 };
+
+/// Goes through the archive one file at a time. Stops at the end, or at the
+/// first thing that doesn't look right.
+pub const Iterator = struct {
+    pos: usize = 0,
+
+    pub fn next(it: *Iterator) ?Entry {
+        if (archive.len - it.pos < 110) return null;
+        const header = archive[it.pos..][0..110];
         if (!std.mem.eql(u8, header[0..6], "070701")) return null;
         const size = hex(header[54..62]) orelse return null;
         const name_size = hex(header[94..102]) orelse return null;
         if (name_size == 0) return null;
-        pos += 110;
+        var pos = it.pos + 110;
         if (archive.len - pos < name_size) return null;
-        const entry_name = archive[pos..][0 .. name_size - 1]; // without the 0 at the end
+        const name = archive[pos..][0 .. name_size - 1]; // without the 0 at the end
         pos = std.mem.alignForward(usize, pos + name_size, 4);
-        if (std.mem.eql(u8, entry_name, "TRAILER!!!")) return null;
+        if (std.mem.eql(u8, name, "TRAILER!!!")) return null;
         if (pos > archive.len or archive.len - pos < size) return null;
         const data = archive[pos..][0..size];
-        if (std.mem.eql(u8, entry_name, name)) return data;
-        pos = std.mem.alignForward(usize, pos + size, 4);
+        it.pos = std.mem.alignForward(usize, pos + size, 4);
+        return .{ .name = name, .data = data };
     }
-}
+};
 
 fn hex(digits: *const [8]u8) ?usize {
     return std.fmt.parseInt(u32, digits, 16) catch null;

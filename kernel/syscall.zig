@@ -1,25 +1,27 @@
 // User mode (ring 3) and system calls.
 //
 // A user program calls the kernel with the `syscall` instruction:
-//   rax = number, rdi/rsi/rdx = arguments, result comes back in rax.
-//   0 exit(code)         1 write(ptr, len)     2 yield()
-//   3 read(ptr, len)     4 spawn(ptr, len)     5 wait(pid)
+//   rax = number, rdi/rsi/rdx = arguments, result comes back in rax
+//   (all ones = error).
+//   0 exit(code)            1 write(fd, ptr, len)   2 yield()
+//   3 read(fd, ptr, len)    4 spawn(ptr, len)       5 wait(pid)
+//   6 open(ptr, len, flags) 7 close(fd)             8 readdir(fd, ptr, len)
+//   9 args(ptr, len)
+// fd 0 is the keyboard, fd 1 the console. open() with flags 1 creates the
+// file (or empties it) for writing.
 // The CPU jumps to syscallEntry with the user's rsp still loaded, so the
 // entry first switches to the thread's kernel stack.
-//
-// Every program gets its own address space (paging.newAddressSpace), so they
-// can all use the same addresses without seeing each other.
 
 const std = @import("std");
 const cpu = @import("cpu.zig");
 const gdt = @import("gdt.zig");
-const pmm = @import("pmm.zig");
-const paging = @import("paging.zig");
 const thread = @import("thread.zig");
 const serial = @import("serial.zig");
 const console = @import("console.zig");
-const elf = @import("elf.zig");
-const initramfs = @import("initramfs.zig");
+const process = @import("process.zig");
+const keyboard = @import("keyboard.zig");
+const fs = @import("fs.zig");
+const heap = @import("heap.zig");
 
 const log = std.log.scoped(.syscall);
 
@@ -27,9 +29,6 @@ const EFER = 0xc0000080;
 const STAR = 0xc0000081;
 const LSTAR = 0xc0000082;
 const FMASK = 0xc0000084;
-
-const stack_top: u64 = 0x7fff_ffff_f000;
-const stack_pages = 4; // 16 KiB, std.fmt in Debug mode wants quite a bit
 
 // Used by syscallEntry. One CPU, so plain globals are fine.
 export var kernel_rsp: u64 = 0; // set on every thread switch
@@ -89,51 +88,92 @@ export fn syscallEntry() callconv(.naked) void {
     );
 }
 
-const failed = std.math.maxInt(u64);
+const failed = process.failed;
 
 export fn handleSyscall(number: u64, a: u64, b: u64, c: u64) callconv(.c) u64 {
-    _ = c;
+    const p = process.current();
     switch (number) {
         0 => {
             log.debug("thread {d}: program exited with {d}", .{ thread.currentId(), a });
-            endProgram(a);
+            process.exit(a);
         },
         1 => {
-            const text = userSlice(a, b) orelse return failed;
-            serial.write(text);
-            if (console_ready) console.write(text);
-            return b;
+            const data = userSlice(b, c) orelse return failed;
+            if (a == 1) {
+                serial.write(data);
+                if (console_ready) console.write(data);
+                return data.len;
+            }
+            const file = openFile(p, a) orelse return failed;
+            if (file.node.is_dir) return failed;
+            // writing past the end makes the file longer
+            const end = file.pos + data.len;
+            if (end > file.node.data.items.len) file.node.data.resize(heap.allocator, end) catch return failed;
+            @memcpy(file.node.data.items[file.pos..end], data);
+            file.pos = end;
+            return data.len;
         },
         2 => {
             thread.yield();
             return 0;
         },
         3 => {
-            // waits until at least one key was typed
-            const buf = userSlice(a, b) orelse return failed;
-            if (buf.len == 0) return 0;
-            // interrupts are off in here, so nothing can sneak in between
-            // the check and the sleep
-            while (input_len == 0) thread.sleepOn(&input_waiters);
-            const n = @min(buf.len, input_len);
-            @memcpy(buf[0..n], input[0..n]);
-            std.mem.copyForwards(u8, input[0 .. input_len - n], input[n..input_len]);
-            input_len -= n;
+            const buf = userSlice(b, c) orelse return failed;
+            if (a == 0) return keyboard.read(buf);
+            const file = openFile(p, a) orelse return failed;
+            if (file.node.is_dir) return failed;
+            const left = file.node.data.items[@min(file.pos, file.node.data.items.len)..];
+            const n = @min(buf.len, left.len);
+            @memcpy(buf[0..n], left[0..n]);
+            file.pos += n;
             return n;
         },
         4 => {
-            const name = userSlice(a, b) orelse return failed;
-            return spawn(name) orelse failed;
+            const cmdline = userSlice(a, b) orelse return failed;
+            return process.spawn(cmdline) orelse failed;
         },
-        5 => {
-            if (a >= processes.len or !processes[a].used) return failed;
-            while (!processes[a].done) thread.sleepOn(&processes[a].waiters);
-            const code = processes[a].exit_code;
-            processes[a].used = false;
-            return code;
+        5 => return process.wait(a),
+        6 => {
+            const path = userSlice(a, b) orelse return failed;
+            const node = (if (c == 1) fs.create(path, false) else fs.lookup(path)) catch return failed;
+            for (p.files[2..], 2..) |*slot, fd| {
+                if (slot.* != null) continue;
+                slot.* = .{ .node = node };
+                return fd;
+            }
+            return failed; // too many open files
+        },
+        7 => {
+            if (a < 2 or a >= p.files.len) return failed;
+            p.files[a] = null;
+            return 0;
+        },
+        8 => {
+            // names of everything in the directory, one per line, "/" after
+            // directories
+            const buf = userSlice(b, c) orelse return failed;
+            const file = openFile(p, a) orelse return failed;
+            if (!file.node.is_dir) return failed;
+            var w: std.Io.Writer = .fixed(buf);
+            for (file.node.children.items) |child| {
+                w.print("{s}{s}\n", .{ child.getName(), if (child.is_dir) "/" else "" }) catch break;
+            }
+            return w.end;
+        },
+        9 => {
+            const buf = userSlice(a, b) orelse return failed;
+            const n = @min(buf.len, p.args().len);
+            @memcpy(buf[0..n], p.args()[0..n]);
+            return n;
         },
         else => return failed,
     }
+}
+
+fn openFile(p: *process.Process, fd: u64) ?*process.File {
+    if (fd < 2 or fd >= p.files.len) return null;
+    if (p.files[fd]) |*file| return file;
+    return null;
 }
 
 /// The pointer comes from the user, it has to point into user memory.
@@ -143,104 +183,3 @@ fn userSlice(ptr: u64, len: u64) ?[]u8 {
 }
 
 const user_end: u64 = 0x8000_0000_0000;
-
-// Keys typed, waiting for someone to read() them.
-var input: [256]u8 = undefined;
-var input_len: usize = 0;
-var input_waiters: thread.WaitQueue = .{};
-
-/// Called by the keyboard thread for every character.
-pub fn keyTyped(ch: u8) void {
-    const irq = cpu.disableInterrupts();
-    defer cpu.restoreInterrupts(irq);
-    if (input_len < input.len) {
-        input[input_len] = ch;
-        input_len += 1;
-    }
-    thread.wakeAll(&input_waiters);
-}
-
-// Running programs. The pid is just the index here.
-const Process = struct {
-    used: bool = false,
-    done: bool = false,
-    exit_code: u64 = 0,
-    waiters: thread.WaitQueue = .{}, // threads in wait() for this one
-    name: [64]u8 = undefined,
-    name_len: usize = 0,
-};
-var processes: [16]Process = @splat(.{});
-
-/// Starts the program `name` from the initramfs. Returns its pid.
-pub fn spawn(name: []const u8) ?u64 {
-    if (name.len > 64 or initramfs.find(name) == null) return null;
-    const irq = cpu.disableInterrupts();
-    defer cpu.restoreInterrupts(irq);
-    for (&processes, 0..) |*p, pid| {
-        if (p.used) continue;
-        // copy the name: the caller's memory isn't visible from the new thread
-        p.* = .{ .used = true, .name_len = name.len };
-        @memcpy(p.name[0..name.len], name);
-        _ = thread.spawn(runProgram, @intFromPtr(p)) catch {
-            p.used = false;
-            return null;
-        };
-        return pid;
-    }
-    return null; // table full
-}
-
-/// Thread entry: load a program from the initramfs into a new address space,
-/// give it a stack, then drop to ring 3. `arg` is its *Process.
-fn runProgram(arg: usize) callconv(.c) noreturn {
-    const process: *Process = @ptrFromInt(arg);
-    thread.setProcess(arg);
-    const name = process.name[0..process.name_len];
-    const space = paging.newAddressSpace();
-    thread.setAddressSpace(space);
-    const file = initramfs.find(name) orelse {
-        log.err("thread {d}: no {s} in the initramfs", .{ thread.currentId(), name });
-        endProgram(failed);
-    };
-    const entry = elf.load(space, file) catch |err| {
-        log.err("thread {d}: can't load {s}: {s}", .{ thread.currentId(), name, @errorName(err) });
-        endProgram(failed);
-    };
-    for (1..stack_pages + 1) |i| {
-        const frame = pmm.alloc() orelse @panic("no memory for the user stack");
-        @memset(pmm.toVirt([4096]u8, frame), 0);
-        paging.mapIn(space, stack_top - i * 4096, frame, paging.USER | paging.WRITABLE | paging.NO_EXECUTE);
-    }
-
-    log.debug("thread {d}: entering ring 3 at 0x{x}", .{ thread.currentId(), entry });
-    // iretq pops rip, cs, rflags, rsp, ss. Interrupts on (0x202) in user mode.
-    asm volatile (
-        \\pushq %[ss]
-        \\pushq %[rsp]
-        \\pushq $0x202
-        \\pushq %[cs]
-        \\pushq %[rip]
-        \\iretq
-        :
-        : [ss] "r" (@as(u64, gdt.user_data)),
-          [rsp] "r" (stack_top),
-          [cs] "r" (@as(u64, gdt.user_code)),
-          [rip] "r" (entry),
-    );
-    unreachable;
-}
-
-/// The program is done (exit or crash): free its whole address space, end
-/// the thread.
-pub fn endProgram(code: u64) noreturn {
-    if (thread.process() != 0) {
-        const p: *Process = @ptrFromInt(thread.process());
-        p.exit_code = code;
-        p.done = true;
-        thread.wakeAll(&p.waiters);
-    }
-    const space = thread.addressSpace();
-    thread.setAddressSpace(0); // can't free the page tables we're running on
-    paging.freeAddressSpace(space);
-    thread.exit();
-}

@@ -1,5 +1,5 @@
-// The shell. Reads a line, runs bin/<first word> from the initramfs and waits
-// for it. A couple of commands are built in.
+// The shell. Reads a line, runs bin/<first word> with the rest of the line
+// as its arguments and waits for it. A couple of commands are built in.
 
 const std = @import("std");
 const sys = @import("sys.zig");
@@ -11,9 +11,9 @@ comptime {
 pub const panic = std.debug.FullPanic(sys.panic);
 
 fn main() void {
-    sys.write("Type help for help.\n");
+    sys.print("Type help for help.\n");
     while (true) {
-        sys.write("> ");
+        sys.print("> ");
         var buf: [128]u8 = undefined;
         const line = readLine(&buf);
         run(std.mem.trim(u8, line, " "));
@@ -26,30 +26,40 @@ fn run(line: []const u8) void {
     const command = words.next().?;
 
     if (std.mem.eql(u8, command, "help")) {
-        sys.write("built in: help, echo <text>\nprograms: hello\n");
+        sys.print("built in: help, echo <text> [> file]\nprograms: ls, cat, hello\n");
         return;
     }
-    if (std.mem.eql(u8, command, "echo")) {
-        sys.write(words.rest());
-        sys.write("\n");
-        return;
-    }
+    if (std.mem.eql(u8, command, "echo")) return echo(words.rest());
 
-    var path_buf: [64]u8 = undefined;
-    const path = std.fmt.bufPrint(&path_buf, "bin/{s}", .{command}) catch {
-        sys.write("name too long\n");
+    var cmdline_buf: [128]u8 = undefined;
+    const cmdline = std.fmt.bufPrint(&cmdline_buf, "bin/{s}", .{line}) catch {
+        sys.print("line too long\n");
         return;
     };
-    const pid = sys.spawn(path) orelse {
-        sys.write(command);
-        sys.write(": not found\n");
+    const pid = sys.spawn(cmdline) orelse {
+        sys.printf("{s}: not found\n", .{command});
         return;
     };
     const code = sys.wait(pid);
-    if (code != 0) {
-        var msg: [64]u8 = undefined;
-        sys.write(std.fmt.bufPrint(&msg, "{s} exited with {d}\n", .{ command, code }) catch "failed\n");
-    }
+    if (code != 0) sys.printf("{s} exited with {d}\n", .{ command, code });
+}
+
+// echo some text
+// echo some text > file
+fn echo(text: []const u8) void {
+    const arrow = std.mem.indexOfScalar(u8, text, '>') orelse {
+        sys.print(text);
+        sys.print("\n");
+        return;
+    };
+    const path = std.mem.trim(u8, text[arrow + 1 ..], " ");
+    const fd = sys.open(path, .create) orelse {
+        sys.printf("can't write {s}\n", .{path});
+        return;
+    };
+    defer sys.close(fd);
+    _ = sys.write(fd, std.mem.trim(u8, text[0..arrow], " "));
+    _ = sys.write(fd, "\n");
 }
 
 // Reads keys until Enter. The kernel doesn't echo, so do it here.
@@ -57,20 +67,20 @@ fn readLine(buf: []u8) []const u8 {
     var len: usize = 0;
     while (true) {
         var c: [1]u8 = undefined;
-        if (sys.read(&c) == 0) continue;
+        if ((sys.read(sys.stdin, &c) orelse 0) == 0) continue;
         switch (c[0]) {
             '\n' => {
-                sys.write("\n");
+                sys.print("\n");
                 return buf[0..len];
             },
             0x08 => if (len > 0) {
                 len -= 1;
-                sys.write(&c);
+                sys.print(&c);
             },
             else => if (len < buf.len and c[0] >= ' ') {
                 buf[len] = c[0];
                 len += 1;
-                sys.write(&c);
+                sys.print(&c);
             },
         }
     }

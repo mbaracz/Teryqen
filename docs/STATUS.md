@@ -34,15 +34,21 @@ middle can't break them.
 Keyboard + console: a thread polls the PS/2 keyboard, the text console on the
 screen (kernel/console.zig) scrolls. Typed keys go to whoever calls read().
 
-There's a shell (programs/shell.zig)! It runs bin/<name> from the initramfs
-and waits for it to finish, plus `help` and `echo` built in. Syscalls now:
-exit, write, yield, read, spawn, wait. A thread waiting in read() or wait()
+There's a shell (programs/shell.zig)! It runs bin/<name> with the rest of
+the line as arguments and waits for it to finish; `help` and `echo` (also
+`echo text > file`) are built in. Programs: ls, cat, hello. Syscalls now:
+exit, write, yield, read, spawn, wait, open, close, readdir, args.
+fd 0 is the keyboard, fd 1 the console. A thread waiting in read() or wait()
 sleeps on a wait queue (thread.WaitQueue) and gets no CPU until it's woken.
 
 User mode: programs are written in Zig (programs/), built as normal ELF
 files, packed into an initramfs (cpio archive, tools/mkinitramfs.zig) that
-Limine loads next to the kernel, and loaded by the kernel from there
-(kernel/initramfs.zig, kernel/elf.zig). They run in ring 3 and call
+Limine loads next to the kernel.
+
+Filesystem (kernel/fs.zig): a tree of directories and files in memory. At
+boot it gets everything from the initramfs. Programs are loaded from it
+(kernel/process.zig, kernel/elf.zig), and they can open, read and write
+files and list directories. Nothing is saved, it's gone after a reboot. They run in ring 3 and call
 the kernel with `syscall`: exit, write, yield (programs/sys.zig). If a user program
 crashes, only it gets killed. Every program has its own page tables (the
 kernel half is shared), so they all use the same addresses without seeing
@@ -76,9 +82,11 @@ through the kernel.
 - [x] own page tables per process
 - [x] load real programs (ELF files) instead of a blob of asm
 - [x] initramfs to load programs from (read only, files looked up by name)
-- [ ] a real filesystem in memory (directories, writing files) + file syscalls
+- [x] a real filesystem in memory (directories, writing files) + file syscalls
 - [x] a shell
-- [ ] more programs (ls, cat...) once there's a filesystem
+- [x] more programs (ls, cat...) once there's a filesystem
+- [ ] mkdir, rm, current directory (cd)
+- [ ] save files somewhere (a disk driver, virtio-blk?)
 - [x] waiting in read()/wait() without spinning (sleep until woken up)
 - [ ] sleep(ms) syscall
 
@@ -93,8 +101,9 @@ through the kernel.
 - syscall entry uses a global for the kernel stack, fine with one CPU
 - ELF loader: two segments on the same page make it panic ("page already
   mapped"), my programs don't do that but a bad file could
-- the kernel can read/write user memory freely, write() only checks that the
-  pointer is in the lower half
+- the kernel can read/write user memory freely, syscalls only check that
+  pointers are in the lower half. A pointer to unmapped user memory makes
+  the kernel page fault -> panic. Need proper copy-from-user.
 - "interrupts off" as a lock only works with one CPU, real spinlocks once
   there's SMP
 - thread stacks have no guard page, an overflow silently eats the heap

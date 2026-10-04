@@ -13,6 +13,8 @@ const console = @import("console.zig");
 const keyboard = @import("keyboard.zig");
 const syscall = @import("syscall.zig");
 const initramfs = @import("initramfs.zig");
+const fs = @import("fs.zig");
+const process = @import("process.zig");
 
 pub const std_options: std.Options = .{
     .logFn = @import("log.zig").logFn,
@@ -64,6 +66,7 @@ export fn kmain() noreturn {
     paging.init();
     testHeap();
     initramfs.init();
+    fs.init();
 
     var screen: ?fb.Screen = null;
     if (limine.framebuffer()) |info| {
@@ -86,10 +89,10 @@ export fn kmain() noreturn {
     if (screen) |s| {
         console.init(s, 150);
         syscall.console_ready = true;
-        if (initramfs.find("etc/motd")) |motd| console.write(motd);
+        if (fs.lookup("etc/motd")) |motd| console.write(motd.data.items) else |_| {}
     }
-    _ = thread.spawn(keyboard.run, @intFromPtr(&syscall.keyTyped)) catch @panic("can't start the keyboard thread");
-    _ = syscall.spawn("bin/shell") orelse @panic("can't start the shell");
+    _ = thread.spawn(keyboard.run, 0) catch @panic("can't start the keyboard thread");
+    _ = process.spawn("bin/shell") orelse @panic("can't start the shell");
 
     // the boot thread has nothing else to do: sleep until the next interrupt,
     // show the uptime once a second

@@ -54,17 +54,42 @@ fn decode(byte: u8) ?u8 {
     return if (shift) shifted[key] else c;
 }
 
-/// Thread entry: polls the keyboard forever and calls on_key(arg) for
-/// every character typed.
-pub fn run(on_key: usize) callconv(.c) noreturn {
-    const callback: *const fn (u8) void = @ptrFromInt(on_key);
+// Keys typed, waiting for someone to read() them.
+var input: [256]u8 = undefined;
+var input_len: usize = 0;
+var input_waiters: thread.WaitQueue = .{};
+
+/// Thread entry: polls the keyboard forever and keeps what's typed for read().
+pub fn run(_: usize) callconv(.c) noreturn {
     // throw away whatever the firmware left in the buffer
     while (cpu.inb(STATUS) & 1 != 0) _ = cpu.inb(DATA);
     while (true) {
         while (cpu.inb(STATUS) & 1 != 0) {
-            if (decode(cpu.inb(DATA))) |c| callback(c);
+            if (decode(cpu.inb(DATA))) |c| typed(c);
         }
         thread.yield();
         asm volatile ("hlt"); // next tick
     }
+}
+
+fn typed(c: u8) void {
+    const irq = cpu.disableInterrupts();
+    defer cpu.restoreInterrupts(irq);
+    if (input_len < input.len) {
+        input[input_len] = c;
+        input_len += 1;
+    }
+    thread.wakeAll(&input_waiters);
+}
+
+/// Waits until at least one key was typed. Call with interrupts off, so
+/// nothing can sneak in between the check and the sleep (syscalls are).
+pub fn read(buf: []u8) usize {
+    if (buf.len == 0) return 0;
+    while (input_len == 0) thread.sleepOn(&input_waiters);
+    const n = @min(buf.len, input_len);
+    @memcpy(buf[0..n], input[0..n]);
+    std.mem.copyForwards(u8, input[0 .. input_len - n], input[n..input_len]);
+    input_len -= n;
+    return n;
 }
