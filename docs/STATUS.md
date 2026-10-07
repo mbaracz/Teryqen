@@ -34,11 +34,13 @@ middle can't break them.
 Keyboard + console: a thread polls the PS/2 keyboard, the text console on the
 screen (kernel/console.zig) scrolls. Typed keys go to whoever calls read().
 
-There's a shell (programs/shell.zig)! It runs bin/<name> with the rest of
-the line as arguments and waits for it to finish; `help` and `echo` (also
-`echo text > file`) are built in. Programs: ls, cat, hello. Syscalls now:
-exit, write, yield, read, spawn, wait, open, close, readdir, args.
-fd 0 is the keyboard, fd 1 the console. A thread waiting in read() or wait()
+There's a shell (programs/shell.zig)! It runs /bin/<name> with the rest of
+the line as arguments and waits for it to finish; `help`, `echo` (also
+`echo text > file`), `cd` and `pwd` are built in. Programs: ls, cat, mkdir,
+rm, hello. Every program has a current directory (inherited from whoever
+started it), paths can be relative and use "..".
+Syscalls: exit, write, yield, read, spawn, wait, open, close, readdir, args,
+mkdir, remove, chdir, getcwd. fd 0 is the keyboard, fd 1 the console. A thread waiting in read() or wait()
 sleeps on a wait queue (thread.WaitQueue) and gets no CPU until it's woken.
 
 User mode: programs are written in Zig (programs/), built as normal ELF
@@ -85,7 +87,7 @@ through the kernel.
 - [x] a real filesystem in memory (directories, writing files) + file syscalls
 - [x] a shell
 - [x] more programs (ls, cat...) once there's a filesystem
-- [ ] mkdir, rm, current directory (cd)
+- [x] mkdir, rm, current directory (cd)
 - [ ] save files somewhere (a disk driver, virtio-blk?)
 - [x] waiting in read()/wait() without spinning (sleep until woken up)
 - [ ] sleep(ms) syscall

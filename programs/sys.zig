@@ -67,6 +67,24 @@ pub fn args(buf: []u8) []const u8 {
     return std.mem.trim(u8, line[space..], " ");
 }
 
+pub fn mkdir(path: []const u8) bool {
+    return result(syscall(10, @intFromPtr(path.ptr), path.len, 0)) != null;
+}
+
+/// Removes a file or an empty directory.
+pub fn remove(path: []const u8) bool {
+    return result(syscall(11, @intFromPtr(path.ptr), path.len, 0)) != null;
+}
+
+pub fn chdir(path: []const u8) bool {
+    return result(syscall(12, @intFromPtr(path.ptr), path.len, 0)) != null;
+}
+
+pub fn getcwd(buf: []u8) []const u8 {
+    const n = syscall(13, @intFromPtr(buf.ptr), buf.len, 0);
+    return buf[0..@min(n, buf.len)];
+}
+
 const failed = std.math.maxInt(u64);
 
 fn result(value: u64) ?u64 {

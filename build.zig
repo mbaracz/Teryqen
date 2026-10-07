@@ -48,7 +48,7 @@ pub fn build(b: *std.Build) void {
 
     // User programs. Same CPU features as the kernel: it doesn't save
     // SSE registers on a thread switch either.
-    const programs = [_][]const u8{ "shell", "hello", "ls", "cat" };
+    const programs = [_][]const u8{ "shell", "hello", "ls", "cat", "mkdir", "rm" };
 
     // The initramfs: programs + a few files, packed into a cpio archive by a
     // little tool that runs on the build machine.

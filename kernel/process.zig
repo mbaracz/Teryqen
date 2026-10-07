@@ -33,9 +33,42 @@ pub const Process = struct {
     cmdline: [128]u8 = undefined,
     cmdline_len: usize = 0,
     files: [8]?File = @splat(null),
+    // current directory, always a full path starting with /
+    cwd: [128]u8 = .{'/'} ++ .{0} ** 127,
+    cwd_len: usize = 1,
+    exe: ?*fs.Node = null, // the program file, found by spawn
 
     pub fn args(p: *const Process) []const u8 {
         return p.cmdline[0..p.cmdline_len];
+    }
+
+    pub fn getCwd(p: *const Process) []const u8 {
+        return p.cwd[0..p.cwd_len];
+    }
+
+    /// Turns `path` into a full path in `buf`: relative ones start at the
+    /// current directory, "." and ".." are worked out.
+    pub fn resolve(p: *const Process, path: []const u8, buf: *[256]u8) ?[]const u8 {
+        var parts: [32][]const u8 = undefined;
+        var count: usize = 0;
+        const starts = if (path.len > 0 and path[0] == '/') "" else p.getCwd();
+        for ([_][]const u8{ starts, path }) |piece| {
+            var it = std.mem.tokenizeScalar(u8, piece, '/');
+            while (it.next()) |part| {
+                if (std.mem.eql(u8, part, ".")) continue;
+                if (std.mem.eql(u8, part, "..")) {
+                    count -|= 1; // ".." in / stays in /
+                    continue;
+                }
+                if (count == parts.len) return null;
+                parts[count] = part;
+                count += 1;
+            }
+        }
+        var w: std.Io.Writer = .fixed(buf);
+        if (count == 0) w.writeAll("/") catch return null;
+        for (parts[0..count]) |part| w.print("/{s}", .{part}) catch return null;
+        return w.buffered();
     }
 };
 var processes: [16]Process = @splat(.{});
@@ -45,12 +78,29 @@ pub fn current() *Process {
     return @ptrFromInt(thread.process());
 }
 
+/// Is this file open in any program? (then it can't be removed)
+pub fn isOpen(node: *fs.Node) bool {
+    for (&processes) |*p| {
+        if (!p.used) continue;
+        if (p.exe == node and !p.done) return true;
+        for (p.files) |f| {
+            if (f != null and f.?.node == node) return true;
+        }
+    }
+    return false;
+}
+
 /// Starts the program named by the first word of `cmdline`. Returns its pid.
+/// The new program starts in the caller's current directory (or / if the
+/// kernel starts it).
 pub fn spawn(cmdline: []const u8) ?u64 {
     if (cmdline.len > 128) return null;
     var words = std.mem.tokenizeScalar(u8, cmdline, ' ');
     const path = words.next() orelse return null;
-    const file = fs.lookup(path) catch return null;
+    const parent: ?*Process = if (thread.process() != 0) current() else null;
+    var buf: [256]u8 = undefined;
+    const full = if (parent) |pp| pp.resolve(path, &buf) orelse return null else path;
+    const file = fs.lookup(full) catch return null;
     if (file.is_dir) return null;
     const irq = cpu.disableInterrupts();
     defer cpu.restoreInterrupts(irq);
@@ -59,6 +109,11 @@ pub fn spawn(cmdline: []const u8) ?u64 {
         // copy it: the caller's memory isn't visible from the new thread
         p.* = .{ .used = true, .cmdline_len = cmdline.len };
         @memcpy(p.cmdline[0..cmdline.len], cmdline);
+        if (parent) |pp| {
+            p.cwd = pp.cwd;
+            p.cwd_len = pp.cwd_len;
+        }
+        p.exe = file;
         _ = thread.spawn(run, @intFromPtr(p)) catch {
             p.used = false;
             return null;
@@ -86,11 +141,7 @@ fn run(arg: usize) callconv(.c) noreturn {
     const path = words.next().?;
     const space = paging.newAddressSpace();
     thread.setAddressSpace(space);
-    const file = fs.lookup(path) catch {
-        log.err("thread {d}: {s} is gone", .{ thread.currentId(), path });
-        exit(failed);
-    };
-    const entry = elf.load(space, file.data.items) catch |err| {
+    const entry = elf.load(space, p.exe.?.data.items) catch |err| {
         log.err("thread {d}: can't load {s}: {s}", .{ thread.currentId(), path, @errorName(err) });
         exit(failed);
     };

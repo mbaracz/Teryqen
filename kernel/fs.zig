@@ -2,8 +2,9 @@
 // At boot it gets everything from the initramfs; files can be created and
 // written, but it's all gone after a reboot.
 //
-// Paths are always from the root: "bin/ls", "/etc/motd" (a leading / is
-// fine). No "..", no current directory yet.
+// Paths here are always from the root: "bin/ls", "/etc/motd" (a leading /
+// is fine). The current directory and ".." are handled in process.zig, it
+// turns every path into a full one first.
 
 const std = @import("std");
 const heap = @import("heap.zig");
@@ -28,7 +29,7 @@ pub const Node = struct {
 
 var root: Node = .{ .is_dir = true };
 
-pub const Error = error{ NotFound, NotADirectory, IsADirectory, BadName, OutOfMemory };
+pub const Error = error{ NotFound, NotADirectory, IsADirectory, BadName, AlreadyExists, NotEmpty, OutOfMemory };
 
 pub fn init() void {
     var files: usize = 0;
@@ -72,6 +73,39 @@ pub fn create(path: []const u8, make_parents: bool) Error!*Node {
         return existing;
     }
     return addChild(dir, name, false);
+}
+
+pub fn mkdir(path: []const u8) Error!*Node {
+    const parent, const name = try splitParent(path);
+    if (child(parent, name) != null) return error.AlreadyExists;
+    return addChild(parent, name, true);
+}
+
+/// Removes a file or an empty directory. The caller makes sure nobody has
+/// the file open.
+pub fn remove(path: []const u8) Error!void {
+    const parent, const name = try splitParent(path);
+    for (parent.children.items, 0..) |c, i| {
+        if (!std.mem.eql(u8, c.getName(), name)) continue;
+        if (c.is_dir and c.children.items.len != 0) return error.NotEmpty;
+        _ = parent.children.orderedRemove(i);
+        c.data.deinit(gpa);
+        c.children.deinit(gpa);
+        gpa.destroy(c);
+        return;
+    }
+    return error.NotFound;
+}
+
+/// "a/b/c" -> (the directory a/b, "c")
+fn splitParent(path: []const u8) Error!struct { *Node, []const u8 } {
+    const trimmed = std.mem.trimEnd(u8, path, "/");
+    const slash = std.mem.lastIndexOfScalar(u8, trimmed, '/');
+    const name = if (slash) |i| trimmed[i + 1 ..] else trimmed;
+    if (name.len == 0) return error.BadName; // the root itself
+    const parent = try lookup(if (slash) |i| trimmed[0..i] else "");
+    if (!parent.is_dir) return error.NotADirectory;
+    return .{ parent, name };
 }
 
 fn child(dir: *Node, name: []const u8) ?*Node {

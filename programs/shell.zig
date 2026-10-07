@@ -13,7 +13,8 @@ pub const panic = std.debug.FullPanic(sys.panic);
 fn main() void {
     sys.print("Type help for help.\n");
     while (true) {
-        sys.print("> ");
+        var cwd_buf: [128]u8 = undefined;
+        sys.printf("{s}> ", .{sys.getcwd(&cwd_buf)});
         var buf: [128]u8 = undefined;
         const line = readLine(&buf);
         run(std.mem.trim(u8, line, " "));
@@ -26,13 +27,24 @@ fn run(line: []const u8) void {
     const command = words.next().?;
 
     if (std.mem.eql(u8, command, "help")) {
-        sys.print("built in: help, echo <text> [> file]\nprograms: ls, cat, hello\n");
+        sys.print("built in: help, echo <text> [> file], cd <dir>, pwd\nprograms: ls, cat, mkdir, rm, hello\n");
+        return;
+    }
+    if (std.mem.eql(u8, command, "cd")) {
+        const dir = words.next() orelse "/";
+        if (!sys.chdir(dir)) sys.printf("cd: {s}: no such directory\n", .{dir});
+        return;
+    }
+    if (std.mem.eql(u8, command, "pwd")) {
+        var cwd_buf: [128]u8 = undefined;
+        sys.printf("{s}\n", .{sys.getcwd(&cwd_buf)});
         return;
     }
     if (std.mem.eql(u8, command, "echo")) return echo(words.rest());
 
     var cmdline_buf: [128]u8 = undefined;
-    const cmdline = std.fmt.bufPrint(&cmdline_buf, "bin/{s}", .{line}) catch {
+    // "/bin", so it works from any directory
+    const cmdline = std.fmt.bufPrint(&cmdline_buf, "/bin/{s}", .{line}) catch {
         sys.print("line too long\n");
         return;
     };

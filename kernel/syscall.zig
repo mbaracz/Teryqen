@@ -6,7 +6,9 @@
 //   0 exit(code)            1 write(fd, ptr, len)   2 yield()
 //   3 read(fd, ptr, len)    4 spawn(ptr, len)       5 wait(pid)
 //   6 open(ptr, len, flags) 7 close(fd)             8 readdir(fd, ptr, len)
-//   9 args(ptr, len)
+//   9 args(ptr, len)        10 mkdir(ptr, len)      11 remove(ptr, len)
+//  12 chdir(ptr, len)      13 getcwd(ptr, len)
+// Paths can be relative to the current directory.
 // fd 0 is the keyboard, fd 1 the console. open() with flags 1 creates the
 // file (or empties it) for writing.
 // The CPU jumps to syscallEntry with the user's rsp still loaded, so the
@@ -134,7 +136,8 @@ export fn handleSyscall(number: u64, a: u64, b: u64, c: u64) callconv(.c) u64 {
         },
         5 => return process.wait(a),
         6 => {
-            const path = userSlice(a, b) orelse return failed;
+            var buf: [256]u8 = undefined;
+            const path = p.resolve(userSlice(a, b) orelse return failed, &buf) orelse return failed;
             const node = (if (c == 1) fs.create(path, false) else fs.lookup(path)) catch return failed;
             for (p.files[2..], 2..) |*slot, fd| {
                 if (slot.* != null) continue;
@@ -164,6 +167,36 @@ export fn handleSyscall(number: u64, a: u64, b: u64, c: u64) callconv(.c) u64 {
             const buf = userSlice(a, b) orelse return failed;
             const n = @min(buf.len, p.args().len);
             @memcpy(buf[0..n], p.args()[0..n]);
+            return n;
+        },
+        10 => {
+            var buf: [256]u8 = undefined;
+            const path = p.resolve(userSlice(a, b) orelse return failed, &buf) orelse return failed;
+            _ = fs.mkdir(path) catch return failed;
+            return 0;
+        },
+        11 => {
+            var buf: [256]u8 = undefined;
+            const path = p.resolve(userSlice(a, b) orelse return failed, &buf) orelse return failed;
+            const node = fs.lookup(path) catch return failed;
+            // someone still using it would be left with a pointer to freed memory
+            if (process.isOpen(node)) return failed;
+            fs.remove(path) catch return failed;
+            return 0;
+        },
+        12 => {
+            var buf: [256]u8 = undefined;
+            const path = p.resolve(userSlice(a, b) orelse return failed, &buf) orelse return failed;
+            const node = fs.lookup(path) catch return failed;
+            if (!node.is_dir or path.len > p.cwd.len) return failed;
+            @memcpy(p.cwd[0..path.len], path);
+            p.cwd_len = path.len;
+            return 0;
+        },
+        13 => {
+            const out = userSlice(a, b) orelse return failed;
+            const n = @min(out.len, p.cwd_len);
+            @memcpy(out[0..n], p.getCwd()[0..n]);
             return n;
         },
         else => return failed,
