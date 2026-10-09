@@ -103,9 +103,9 @@ through the kernel.
 - syscall entry uses a global for the kernel stack, fine with one CPU
 - ELF loader: two segments on the same page make it panic ("page already
   mapped"), my programs don't do that but a bad file could
-- the kernel can read/write user memory freely, syscalls only check that
-  pointers are in the lower half. A pointer to unmapped user memory makes
-  the kernel page fault -> panic. Need proper copy-from-user.
+- syscalls check user pointers by walking the page tables (mapped, USER,
+  writable if the kernel writes there), so a bad pointer just fails the
+  syscall. Fine while a program has one thread and can't unmap anything.
 - "interrupts off" as a lock only works with one CPU, real spinlocks once
   there's SMP
 - thread stacks have no guard page, an overflow silently eats the heap

@@ -24,6 +24,7 @@ const process = @import("process.zig");
 const keyboard = @import("keyboard.zig");
 const fs = @import("fs.zig");
 const heap = @import("heap.zig");
+const paging = @import("paging.zig");
 
 const log = std.log.scoped(.syscall);
 
@@ -100,7 +101,7 @@ export fn handleSyscall(number: u64, a: u64, b: u64, c: u64) callconv(.c) u64 {
             process.exit(a);
         },
         1 => {
-            const data = userSlice(b, c) orelse return failed;
+            const data = userSlice(b, c, false) orelse return failed;
             if (a == 1) {
                 serial.write(data);
                 if (console_ready) console.write(data);
@@ -120,7 +121,7 @@ export fn handleSyscall(number: u64, a: u64, b: u64, c: u64) callconv(.c) u64 {
             return 0;
         },
         3 => {
-            const buf = userSlice(b, c) orelse return failed;
+            const buf = userSlice(b, c, true) orelse return failed;
             if (a == 0) return keyboard.read(buf);
             const file = openFile(p, a) orelse return failed;
             if (file.node.is_dir) return failed;
@@ -131,13 +132,13 @@ export fn handleSyscall(number: u64, a: u64, b: u64, c: u64) callconv(.c) u64 {
             return n;
         },
         4 => {
-            const cmdline = userSlice(a, b) orelse return failed;
+            const cmdline = userSlice(a, b, false) orelse return failed;
             return process.spawn(cmdline) orelse failed;
         },
         5 => return process.wait(a),
         6 => {
             var buf: [256]u8 = undefined;
-            const path = p.resolve(userSlice(a, b) orelse return failed, &buf) orelse return failed;
+            const path = p.resolve(userSlice(a, b, false) orelse return failed, &buf) orelse return failed;
             const node = (if (c == 1) fs.create(path, false) else fs.lookup(path)) catch return failed;
             for (p.files[2..], 2..) |*slot, fd| {
                 if (slot.* != null) continue;
@@ -154,7 +155,7 @@ export fn handleSyscall(number: u64, a: u64, b: u64, c: u64) callconv(.c) u64 {
         8 => {
             // names of everything in the directory, one per line, "/" after
             // directories
-            const buf = userSlice(b, c) orelse return failed;
+            const buf = userSlice(b, c, true) orelse return failed;
             const file = openFile(p, a) orelse return failed;
             if (!file.node.is_dir) return failed;
             var w: std.Io.Writer = .fixed(buf);
@@ -164,20 +165,20 @@ export fn handleSyscall(number: u64, a: u64, b: u64, c: u64) callconv(.c) u64 {
             return w.end;
         },
         9 => {
-            const buf = userSlice(a, b) orelse return failed;
+            const buf = userSlice(a, b, true) orelse return failed;
             const n = @min(buf.len, p.args().len);
             @memcpy(buf[0..n], p.args()[0..n]);
             return n;
         },
         10 => {
             var buf: [256]u8 = undefined;
-            const path = p.resolve(userSlice(a, b) orelse return failed, &buf) orelse return failed;
+            const path = p.resolve(userSlice(a, b, false) orelse return failed, &buf) orelse return failed;
             _ = fs.mkdir(path) catch return failed;
             return 0;
         },
         11 => {
             var buf: [256]u8 = undefined;
-            const path = p.resolve(userSlice(a, b) orelse return failed, &buf) orelse return failed;
+            const path = p.resolve(userSlice(a, b, false) orelse return failed, &buf) orelse return failed;
             const node = fs.lookup(path) catch return failed;
             // someone still using it would be left with a pointer to freed memory
             if (process.isOpen(node)) return failed;
@@ -186,7 +187,7 @@ export fn handleSyscall(number: u64, a: u64, b: u64, c: u64) callconv(.c) u64 {
         },
         12 => {
             var buf: [256]u8 = undefined;
-            const path = p.resolve(userSlice(a, b) orelse return failed, &buf) orelse return failed;
+            const path = p.resolve(userSlice(a, b, false) orelse return failed, &buf) orelse return failed;
             const node = fs.lookup(path) catch return failed;
             if (!node.is_dir or path.len > p.cwd.len) return failed;
             @memcpy(p.cwd[0..path.len], path);
@@ -194,7 +195,7 @@ export fn handleSyscall(number: u64, a: u64, b: u64, c: u64) callconv(.c) u64 {
             return 0;
         },
         13 => {
-            const out = userSlice(a, b) orelse return failed;
+            const out = userSlice(a, b, true) orelse return failed;
             const n = @min(out.len, p.cwd_len);
             @memcpy(out[0..n], p.getCwd()[0..n]);
             return n;
@@ -209,10 +210,11 @@ fn openFile(p: *process.Process, fd: u64) ?*process.File {
     return null;
 }
 
-/// The pointer comes from the user, it has to point into user memory.
-fn userSlice(ptr: u64, len: u64) ?[]u8 {
-    if (ptr >= user_end or len > 4096 or ptr + len > user_end) return null;
+/// A buffer from the user. It has to be memory the program can really use
+/// (mapped, user, writable if the kernel writes into it), checked in its page
+/// tables; a bad pointer makes the syscall fail instead of crashing the kernel.
+fn userSlice(ptr: u64, len: u64, kernel_writes: bool) ?[]u8 {
+    if (len > 4096) return null;
+    if (!paging.userCanAccess(thread.addressSpace(), ptr, len, kernel_writes)) return null;
     return @as([*]u8, @ptrFromInt(ptr))[0..len];
 }
-
-const user_end: u64 = 0x8000_0000_0000;

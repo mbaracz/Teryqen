@@ -181,6 +181,31 @@ fn freeTable(phys: u64, level: u8) void {
     pmm.free(phys);
 }
 
+/// True if every page in [addr, addr + len) is mapped in `root` for user
+/// mode (and writable, if `write`). Syscalls check this before touching a
+/// pointer a program gave them; otherwise a bad pointer would page fault
+/// inside the kernel.
+pub fn userCanAccess(root: u64, addr: u64, len: u64, write: bool) bool {
+    if (len == 0) return true;
+    const end = std.math.add(u64, addr, len) catch return false;
+    if (end > 0x8000_0000_0000) return false;
+    var page = std.mem.alignBackward(u64, addr, page_size);
+    while (page < end) : (page += page_size) {
+        var table = pmm.toVirt([512]u64, root);
+        var shift: u6 = 39;
+        while (true) : (shift -= 9) {
+            const entry = table[(page >> shift) & 0x1ff];
+            if (entry & PRESENT == 0 or entry & USER == 0) return false;
+            if (shift == 12) {
+                if (write and entry & WRITABLE == 0) return false;
+                break;
+            }
+            table = pmm.toVirt([512]u64, entry & ADDRESS_MASK);
+        }
+    }
+    return true;
+}
+
 pub fn activate(root: u64) void {
     asm volatile ("movq %[root], %%cr3"
         :
