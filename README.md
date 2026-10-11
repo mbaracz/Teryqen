@@ -29,6 +29,8 @@ shell, type `help`. Try `ls`, `cat /etc/motd`, `mkdir home`, `cd home`,
 initramfs together with the files in `initramfs/`; `tools/` has the program
 that packs it.
 
+`zig build image` only makes the disk image, `zig-out/teryqen.img`.
+
 To debug, run `zig build debug` (QEMU waits for gdb) and in another terminal
 `gdb -x tools/gdb/kernel.gdb`.
 

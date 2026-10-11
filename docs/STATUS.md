@@ -1,6 +1,7 @@
 # Status
 
-`zig build run` boots the kernel in QEMU through Limine. It prints
+`zig build run` makes a disk image (GPT + FAT32 EFI partition, built by
+tools/mkimage.zig) and boots it in QEMU through Limine. It prints
 "hello from teryqen!" on the serial port and draws it on the screen with
 my own little font.
 
@@ -95,8 +96,6 @@ through the kernel.
 ## Notes / things to read up on
 
 - higher half kernel, linker scripts
-- QEMU serves the boot folder as a fake FAT disk (`fat:`), fine for now but
-  at some point I need a real disk image
 - bitmap allocator is slow (linear search), fine while nothing allocates much
 - heap: pages cut into small pieces are never given back, and big
   allocations never reuse virtual addresses. Fine for now.
