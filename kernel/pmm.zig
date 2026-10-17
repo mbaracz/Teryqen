@@ -82,6 +82,30 @@ pub fn alloc() ?u64 {
     return null;
 }
 
+/// `count` frames in a row (devices that read memory directly want that).
+/// Zeroed. Slow, it searches the whole bitmap.
+pub fn allocContiguous(count: u64) ?u64 {
+    const irq = cpu.disableInterrupts();
+    defer cpu.restoreInterrupts(irq);
+    var start = next;
+    var run: u64 = 0;
+    var f = next;
+    while (f < frame_count) : (f += 1) {
+        if (bitmap[f / 8] & bit(f) != 0) {
+            run = 0;
+            start = f + 1;
+            continue;
+        }
+        run += 1;
+        if (run == count) {
+            for (start..start + count) |used| setUsed(used);
+            @memset(@as([*]u8, @ptrFromInt(hhdm + start * page_size))[0 .. count * page_size], 0);
+            return start * page_size;
+        }
+    }
+    return null;
+}
+
 pub fn free(phys: u64) void {
     const irq = cpu.disableInterrupts();
     defer cpu.restoreInterrupts(irq);

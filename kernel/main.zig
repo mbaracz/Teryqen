@@ -15,6 +15,7 @@ const syscall = @import("syscall.zig");
 const initramfs = @import("initramfs.zig");
 const fs = @import("fs.zig");
 const process = @import("process.zig");
+const virtio_blk = @import("virtio_blk.zig");
 
 pub const std_options: std.Options = .{
     .logFn = @import("log.zig").logFn,
@@ -67,6 +68,7 @@ export fn kmain() noreturn {
     testHeap();
     initramfs.init();
     fs.init();
+    if (virtio_blk.init()) checkDisk();
 
     var screen: ?fb.Screen = null;
     if (limine.framebuffer()) |info| {
@@ -111,6 +113,19 @@ export fn kmain() noreturn {
             s.drawText(32, 100, text, s.rgb(0x8a, 0x90, 0x9c), 2);
         }
     }
+}
+
+// read the start of the disk: an MBR signature and a GPT header (what
+// tools/mkimage.zig wrote) mean reading works
+fn checkDisk() void {
+    var buf: [2 * 512]u8 = undefined;
+    virtio_blk.read(0, &buf) catch |err| {
+        log.err("disk: can't read: {s}", .{@errorName(err)});
+        return;
+    };
+    const mbr_ok = buf[510] == 0x55 and buf[511] == 0xaa;
+    const gpt_ok = std.mem.eql(u8, buf[512..520], "EFI PART");
+    log.info("disk: MBR signature {s}, GPT header {s}", .{ if (mbr_ok) "ok" else "missing", if (gpt_ok) "ok" else "missing" });
 }
 
 // try out the heap with a growing list and a big buffer

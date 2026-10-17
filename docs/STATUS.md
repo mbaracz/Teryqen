@@ -57,6 +57,10 @@ crashes, only it gets killed. Every program has its own page tables (the
 kernel half is shared), so they all use the same addresses without seeing
 each other.
 
+Disk: PCI is scanned for the virtio disk (kernel/pci.zig), the driver uses
+the legacy virtio interface (I/O ports) and polls instead of interrupts. At
+boot it reads the first two sectors and checks the MBR and GPT header.
+
 `zig build debug` + `gdb -x tools/gdb/kernel.gdb` stops at kmain, can step
 through the kernel.
 
@@ -89,7 +93,9 @@ through the kernel.
 - [x] a shell
 - [x] more programs (ls, cat...) once there's a filesystem
 - [x] mkdir, rm, current directory (cd)
-- [ ] save files somewhere (a disk driver, virtio-blk?)
+- [x] disk driver: virtio-blk, reading sectors works (kernel/virtio_blk.zig)
+- [ ] writing sectors
+- [ ] save files somewhere: a data partition on the disk, some simple format
 - [x] waiting in read()/wait() without spinning (sleep until woken up)
 - [ ] sleep(ms) syscall
 
@@ -97,6 +103,7 @@ through the kernel.
 
 - higher half kernel, linker scripts
 - bitmap allocator is slow (linear search), fine while nothing allocates much
+- virtio disk: polling, one request at a time, interrupts off while it waits
 - heap: pages cut into small pieces are never given back, and big
   allocations never reuse virtual addresses. Fine for now.
 - syscall entry uses a global for the kernel stack, fine with one CPU
