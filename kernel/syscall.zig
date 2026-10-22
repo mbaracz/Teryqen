@@ -7,7 +7,7 @@
 //   3 read(fd, ptr, len)    4 spawn(ptr, len)       5 wait(pid)
 //   6 open(ptr, len, flags) 7 close(fd)             8 readdir(fd, ptr, len)
 //   9 args(ptr, len)        10 mkdir(ptr, len)      11 remove(ptr, len)
-//  12 chdir(ptr, len)      13 getcwd(ptr, len)
+//  12 chdir(ptr, len)      13 getcwd(ptr, len)     14 sync()
 // Paths can be relative to the current directory.
 // fd 0 is the keyboard, fd 1 the console. open() with flags 1 creates the
 // file (or empties it) for writing.
@@ -23,6 +23,7 @@ const console = @import("console.zig");
 const process = @import("process.zig");
 const keyboard = @import("keyboard.zig");
 const fs = @import("fs.zig");
+const datadisk = @import("datadisk.zig");
 const heap = @import("heap.zig");
 const paging = @import("paging.zig");
 
@@ -200,6 +201,7 @@ export fn handleSyscall(number: u64, a: u64, b: u64, c: u64) callconv(.c) u64 {
             @memcpy(out[0..n], p.getCwd()[0..n]);
             return n;
         },
+        14 => return datadisk.sync() catch failed,
         else => return failed,
     }
 }

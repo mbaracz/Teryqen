@@ -44,8 +44,9 @@ pub const Device = struct {
     }
 };
 
-/// The first device with this vendor and device id.
-pub fn find(vendor: u16, device: u16) ?Device {
+/// The n-th device (from 0) with this vendor and device id.
+pub fn find(vendor: u16, device: u16, n: usize) ?Device {
+    var seen: usize = 0;
     for (0..256) |bus| {
         for (0..32) |slot| {
             for (0..8) |func| {
@@ -54,7 +55,10 @@ pub fn find(vendor: u16, device: u16) ?Device {
                     if (func == 0) break; // nothing in this slot
                     continue;
                 }
-                if (d.vendor() == vendor and d.deviceId() == device) return d;
+                if (d.vendor() == vendor and d.deviceId() == device) {
+                    if (seen == n) return d;
+                    seen += 1;
+                }
             }
         }
     }

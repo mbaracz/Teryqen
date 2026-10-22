@@ -129,6 +129,12 @@ fn qemuCommand(b: *std.Build, image: std.Build.LazyPath) *std.Build.Step.Run {
     });
     // read only, so running it never changes the built image
     qemu.addPrefixedFileArg("if=virtio,readonly=on,format=raw,file=", image);
+    // second disk for saving files (/data), made once and kept between runs
+    const data_img = b.pathFromRoot("zig-out/data.img");
+    const make_data = b.addSystemCommand(&.{ "sh", "-c", b.fmt("test -f {s} || (mkdir -p {s} && truncate -s 16M {s})", .{ data_img, b.pathFromRoot("zig-out"), data_img }) });
+    make_data.has_side_effects = true;
+    qemu.step.dependOn(&make_data.step);
+    qemu.addArgs(&.{ "-drive", b.fmt("if=virtio,format=raw,file={s}", .{data_img}) });
     qemu.stdio = .inherit;
     qemu.has_side_effects = true;
     return qemu;

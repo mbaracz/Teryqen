@@ -31,6 +31,10 @@ that packs it.
 
 `zig build image` only makes the disk image, `zig-out/teryqen.img`.
 
+Files in `/data` are saved to a second disk, `zig-out/data.img`, when you run
+`sync` in the shell, and are back after a reboot. Delete that file to start
+over (it also goes away with `rm -rf zig-out`).
+
 To debug, run `zig build debug` (QEMU waits for gdb) and in another terminal
 `gdb -x tools/gdb/kernel.gdb`.
 

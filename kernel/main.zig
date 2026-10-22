@@ -16,6 +16,7 @@ const initramfs = @import("initramfs.zig");
 const fs = @import("fs.zig");
 const process = @import("process.zig");
 const virtio_blk = @import("virtio_blk.zig");
+const datadisk = @import("datadisk.zig");
 
 pub const std_options: std.Options = .{
     .logFn = @import("log.zig").logFn,
@@ -68,7 +69,9 @@ export fn kmain() noreturn {
     testHeap();
     initramfs.init();
     fs.init();
-    if (virtio_blk.init()) checkDisk();
+    virtio_blk.init();
+    checkDisk();
+    datadisk.init();
 
     var screen: ?fb.Screen = null;
     if (limine.framebuffer()) |info| {
@@ -118,8 +121,9 @@ export fn kmain() noreturn {
 // read the start of the disk: an MBR signature and a GPT header (what
 // tools/mkimage.zig wrote) mean reading works
 fn checkDisk() void {
+    const boot_disk = virtio_blk.disk(0) orelse return;
     var buf: [2 * 512]u8 = undefined;
-    virtio_blk.read(0, &buf) catch |err| {
+    boot_disk.read(0, &buf) catch |err| {
         log.err("disk: can't read: {s}", .{@errorName(err)});
         return;
     };

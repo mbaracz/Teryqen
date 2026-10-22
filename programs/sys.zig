@@ -85,6 +85,11 @@ pub fn getcwd(buf: []u8) []const u8 {
     return buf[0..@min(n, buf.len)];
 }
 
+/// Saves /data to the disk, returns how many files.
+pub fn sync() ?u64 {
+    return result(syscall(14, 0, 0, 0));
+}
+
 const failed = std.math.maxInt(u64);
 
 fn result(value: u64) ?u64 {

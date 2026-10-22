@@ -57,9 +57,14 @@ crashes, only it gets killed. Every program has its own page tables (the
 kernel half is shared), so they all use the same addresses without seeing
 each other.
 
-Disk: PCI is scanned for the virtio disk (kernel/pci.zig), the driver uses
-the legacy virtio interface (I/O ports) and polls instead of interrupts. At
-boot it reads the first two sectors and checks the MBR and GPT header.
+Disks: PCI is scanned for virtio disks (kernel/pci.zig), the driver uses the
+legacy virtio interface (I/O ports) and polls instead of interrupts. Disk 0
+is the boot image (read only, the kernel checks its MBR and GPT header at
+boot), disk 1 is zig-out/data.img for saving files.
+
+Saving files: whatever is in /data gets written to the data disk by `sync`
+(shell command / syscall) and loaded back at boot (kernel/datadisk.zig, my
+own tiny format: a directory sector + files one after another).
 
 `zig build debug` + `gdb -x tools/gdb/kernel.gdb` stops at kmain, can step
 through the kernel.
@@ -94,8 +99,9 @@ through the kernel.
 - [x] more programs (ls, cat...) once there's a filesystem
 - [x] mkdir, rm, current directory (cd)
 - [x] disk driver: virtio-blk, reading sectors works (kernel/virtio_blk.zig)
-- [ ] writing sectors
-- [ ] save files somewhere: a data partition on the disk, some simple format
+- [x] writing sectors
+- [x] save files somewhere: second disk, my own simple format (/data + sync)
+- [ ] subdirectories in /data, bigger files than... whatever fits in 16 MiB
 - [x] waiting in read()/wait() without spinning (sleep until woken up)
 - [ ] sleep(ms) syscall
 
