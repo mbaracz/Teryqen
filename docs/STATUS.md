@@ -37,12 +37,14 @@ screen (kernel/console.zig) scrolls. Typed keys go to whoever calls read().
 
 There's a shell (programs/shell.zig)! It runs /bin/<name> with the rest of
 the line as arguments and waits for it to finish; `help`, `echo` (also
-`echo text > file`), `cd` and `pwd` are built in. Programs: ls, cat, mkdir,
-rm, hello. Every program has a current directory (inherited from whoever
-started it), paths can be relative and use "..".
+`echo text > file`), `cd`, `pwd` and `sync` are built in. Programs: ls, cat,
+mkdir, rm, sleep, uptime, hello. Every program has a current directory
+(inherited from whoever started it), paths can be relative and use "..".
 Syscalls: exit, write, yield, read, spawn, wait, open, close, readdir, args,
-mkdir, remove, chdir, getcwd. fd 0 is the keyboard, fd 1 the console. A thread waiting in read() or wait()
-sleeps on a wait queue (thread.WaitQueue) and gets no CPU until it's woken.
+mkdir, remove, chdir, getcwd, sync, sleep, uptime. fd 0 is the keyboard,
+fd 1 the console. A thread waiting in read() or wait() sleeps on a wait
+queue (thread.WaitQueue) and gets no CPU until it's woken. sleep() puts the
+thread on a list the timer interrupt checks every tick.
 
 User mode: programs are written in Zig (programs/), built as normal ELF
 files, packed into an initramfs (cpio archive, tools/mkinitramfs.zig) that
@@ -87,7 +89,7 @@ through the kernel.
 - [x] timer interrupt
 - [x] kernel threads and switching between them
 - [x] preemption: switch threads from the timer interrupt
-- [ ] sleeping threads (wait for N ticks without spinning)
+- [x] sleeping threads (wait for N ticks without spinning)
 - [x] keyboard input + a text console on the screen
 - [ ] keyboard interrupt instead of polling (needs the I/O APIC -> ACPI tables)
 - [x] user mode: run code in ring 3, syscalls
@@ -103,7 +105,7 @@ through the kernel.
 - [x] save files somewhere: second disk, my own simple format (/data + sync)
 - [ ] subdirectories in /data, bigger files than... whatever fits in 16 MiB
 - [x] waiting in read()/wait() without spinning (sleep until woken up)
-- [ ] sleep(ms) syscall
+- [x] sleep(ms) syscall (+ sleep and uptime programs)
 
 ## Notes / things to read up on
 

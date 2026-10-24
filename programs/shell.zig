@@ -27,7 +27,7 @@ fn run(line: []const u8) void {
     const command = words.next().?;
 
     if (std.mem.eql(u8, command, "help")) {
-        sys.print("built in: help, echo <text> [> file], cd <dir>, pwd, sync\nprograms: ls, cat, mkdir, rm, hello\nfiles in /data are kept after sync\n");
+        sys.print("built in: help, echo <text> [> file], cd <dir>, pwd, sync\nprograms: ls, cat, mkdir, rm, sleep, uptime, hello\nfiles in /data are kept after sync\n");
         return;
     }
     if (std.mem.eql(u8, command, "sync")) {

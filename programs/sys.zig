@@ -90,6 +90,15 @@ pub fn sync() ?u64 {
     return result(syscall(14, 0, 0, 0));
 }
 
+pub fn sleep(ms: u64) void {
+    _ = syscall(15, ms, 0, 0);
+}
+
+/// Milliseconds since boot (in steps of 10).
+pub fn uptime() u64 {
+    return syscall(16, 0, 0, 0);
+}
+
 const failed = std.math.maxInt(u64);
 
 fn result(value: u64) ?u64 {

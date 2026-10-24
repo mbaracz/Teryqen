@@ -67,8 +67,7 @@ pub fn run(_: usize) callconv(.c) noreturn {
         while (cpu.inb(STATUS) & 1 != 0) {
             if (decode(cpu.inb(DATA))) |c| typed(c);
         }
-        thread.yield();
-        asm volatile ("hlt"); // next tick
+        thread.sleepTicks(1); // look again next tick
     }
 }
 

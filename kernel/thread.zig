@@ -23,6 +23,7 @@ pub const Thread = struct {
     dead: bool = false,
     ticks_left: u32 = slice_ticks,
     address_space: u64 = 0, // PML4 of a user process, 0 = kernel only
+    wake_at: u64 = 0, // tick to wake up at, while in `sleeping`
     process: usize = 0, // syscall.zig keeps its *Process here
     node: std.DoublyLinkedList.Node = .{},
 };
@@ -31,6 +32,7 @@ var boot_thread: Thread = .{ .id = 0, .stack = null };
 var current: *Thread = &boot_thread;
 var ready: std.DoublyLinkedList = .{};
 var dead: std.DoublyLinkedList = .{}; // freed later, a thread can't free its own stack
+var sleeping: std.DoublyLinkedList = .{}; // waiting for a tick, see sleepTicks
 var next_id: u64 = 1;
 var active_space: u64 = 0; // what's in cr3 right now (0 = kernel's)
 
@@ -92,6 +94,19 @@ pub fn sleepOn(queue: *WaitQueue) void {
     freeDead();
 }
 
+/// Sleeps for at least `ticks` timer ticks (10 ms each), without using the
+/// CPU in the meantime.
+pub fn sleepTicks(ticks: u64) void {
+    const irq = cpu.disableInterrupts();
+    defer cpu.restoreInterrupts(irq);
+    if (current == &boot_thread) @panic("the boot thread can't sleep");
+    current.wake_at = @import("timer.zig").ticksSinceBoot() + @max(ticks, 1);
+    sleeping.append(&current.node);
+    const next = ready.popFirst() orelse @panic("no thread left to run");
+    switchTo(fromNode(next));
+    freeDead();
+}
+
 /// Makes every thread sleeping on `queue` ready again.
 pub fn wakeAll(queue: *WaitQueue) void {
     const irq = cpu.disableInterrupts();
@@ -113,6 +128,17 @@ pub fn exit() noreturn {
 /// current thread used up its slice and someone else is waiting, switch.
 /// The interrupted thread continues later where it was, through iretq.
 pub fn onTick() void {
+    // anyone done sleeping?
+    const now = @import("timer.zig").ticksSinceBoot();
+    var node = sleeping.first;
+    while (node) |n| {
+        node = n.next;
+        if (fromNode(n).wake_at <= now) {
+            sleeping.remove(n);
+            ready.append(n);
+        }
+    }
+
     if (current.ticks_left > 0) current.ticks_left -= 1;
     if (current.ticks_left > 0) return;
     const next = ready.popFirst() orelse return;
