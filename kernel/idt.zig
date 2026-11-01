@@ -1,4 +1,4 @@
-// IDT for the 32 CPU exceptions (+ the timer interrupt). Before this, any exception (bad pointer,
+// IDT for the 32 CPU exceptions (+ timer and keyboard interrupts). Before this, any exception (bad pointer,
 // ud2...) made QEMU triple fault and reboot without saying anything.
 //
 // Every vector gets a small stub (generated at comptime) that pushes a fake
@@ -8,6 +8,7 @@
 const std = @import("std");
 const gdt = @import("gdt.zig");
 const timer = @import("timer.zig");
+const keyboard = @import("keyboard.zig");
 const process = @import("process.zig");
 
 const log = std.log.scoped(.cpu);
@@ -80,6 +81,7 @@ pub fn init() void {
     inline for (0..32) |vector| setGate(vector, @intFromPtr(&stub(vector)));
     setGate(timer.vector, @intFromPtr(&stub(timer.vector)));
     setGate(timer.spurious_vector, @intFromPtr(&stub(timer.spurious_vector)));
+    setGate(keyboard.vector, @intFromPtr(&stub(keyboard.vector)));
     const ptr = Pointer{ .limit = @sizeOf(@TypeOf(idt)) - 1, .base = @intFromPtr(&idt) };
     asm volatile ("lidt (%[ptr])"
         :
@@ -148,6 +150,7 @@ export fn interruptCommon() callconv(.naked) void {
 export fn handleException(frame: *Frame) callconv(.c) void {
     switch (frame.vector) {
         timer.vector => return timer.onTick(),
+        keyboard.vector => return keyboard.onInterrupt(),
         // spurious interrupt from the APIC, nothing to do (and no EOI)
         timer.spurious_vector => return,
         // breakpoint (int3) is harmless, just continue after it

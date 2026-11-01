@@ -77,6 +77,11 @@ pub fn onTick() void {
     @import("thread.zig").onTick();
 }
 
+/// "End of interrupt": tells the APIC we're done, so it sends the next one.
+pub fn eoi() void {
+    cpu.wrmsr(EOI, 0);
+}
+
 pub fn ticksSinceBoot() u64 {
     return @atomicLoad(u64, &ticks, .monotonic);
 }

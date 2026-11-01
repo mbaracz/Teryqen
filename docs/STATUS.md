@@ -32,8 +32,11 @@ timer switches threads every 20 ms, so a thread that never yields can't keep
 the CPU. Heap and pmm turn interrupts off while they work, so a switch in the
 middle can't break them.
 
-Keyboard + console: a thread polls the PS/2 keyboard, the text console on the
-screen (kernel/console.zig) scrolls. Typed keys go to whoever calls read().
+Keyboard + console: the PS/2 keyboard sends an interrupt for every key
+(IRQ 1). The I/O APIC is found through the ACPI tables (MADT, kernel/acpi.zig)
+and routes it to vector 33 (kernel/ioapic.zig); without an I/O APIC a thread
+polls the keyboard instead. The text console on the screen
+(kernel/console.zig) scrolls. Typed keys go to whoever calls read().
 
 There's a shell (programs/shell.zig)! It runs /bin/<name> with the rest of
 the line as arguments and waits for it to finish; `help`, `echo` (also
@@ -91,7 +94,8 @@ through the kernel.
 - [x] preemption: switch threads from the timer interrupt
 - [x] sleeping threads (wait for N ticks without spinning)
 - [x] keyboard input + a text console on the screen
-- [ ] keyboard interrupt instead of polling (needs the I/O APIC -> ACPI tables)
+- [x] keyboard interrupt instead of polling (needs the I/O APIC -> ACPI tables)
+- [ ] virtio disk interrupts too, instead of polling
 - [x] user mode: run code in ring 3, syscalls
 - [x] own page tables per process
 - [x] load real programs (ELF files) instead of a blob of asm

@@ -96,6 +96,17 @@ const File = extern struct {
     size: u64,
 };
 
+const RsdpRequest = extern struct {
+    id: [4]u64 = .{ 0xc7b1dd30df4c8b88, 0x0a82e883a194f07b, 0xc5e77b6b397e7b43, 0x27637845accdcf3c },
+    revision: u64 = 0,
+    response: ?*const RsdpResponse = null,
+};
+
+const RsdpResponse = extern struct {
+    revision: u64,
+    address: u64, // in the direct map
+};
+
 export var requests_start linksection(".limine_requests_start") = [4]u64{ 0xf6b8f4b39de7d1ae, 0xfab91a6940fcb9cf, 0x785c6ed015d3e316, 0x181e920a7852b9d9 };
 export var base_revision linksection(".limine_requests") = BaseRevision{};
 export var framebuffer_request linksection(".limine_requests") = FramebufferRequest{};
@@ -103,6 +114,7 @@ export var hhdm_request linksection(".limine_requests") = HhdmRequest{};
 export var memmap_request linksection(".limine_requests") = MemmapRequest{};
 export var executable_address_request linksection(".limine_requests") = ExecutableAddressRequest{};
 export var module_request linksection(".limine_requests") = ModuleRequest{};
+export var rsdp_request linksection(".limine_requests") = RsdpRequest{};
 export var requests_end linksection(".limine_requests_end") = [2]u64{ 0xadc0e0531bb10d03, 0x9572709f31764c62 };
 
 /// Limine sets revision to 0 if it supports the revision we asked for.
@@ -146,4 +158,11 @@ pub fn module() ?[]const u8 {
     if (response.module_count == 0) return null;
     const file = response.modules[0];
     return @as([*]const u8, @ptrFromInt(file.address))[0..file.size];
+}
+
+/// Where the ACPI RSDP is (direct map address).
+pub fn rsdp() ?u64 {
+    const request: *const volatile RsdpRequest = &rsdp_request;
+    const response = request.response orelse return null;
+    return response.address;
 }

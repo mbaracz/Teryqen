@@ -17,6 +17,8 @@ const fs = @import("fs.zig");
 const process = @import("process.zig");
 const virtio_blk = @import("virtio_blk.zig");
 const datadisk = @import("datadisk.zig");
+const acpi = @import("acpi.zig");
+const ioapic = @import("ioapic.zig");
 
 pub const std_options: std.Options = .{
     .logFn = @import("log.zig").logFn,
@@ -96,7 +98,12 @@ export fn kmain() noreturn {
         syscall.console_ready = true;
         if (fs.lookup("etc/motd")) |motd| console.write(motd.data.items) else |_| {}
     }
-    _ = thread.spawn(keyboard.run, 0) catch @panic("can't start the keyboard thread");
+    acpi.init();
+    if (ioapic.init()) {
+        keyboard.init();
+    } else {
+        _ = thread.spawn(keyboard.poll, 0) catch @panic("can't start the keyboard thread");
+    }
     _ = process.spawn("bin/shell") orelse @panic("can't start the shell");
 
     // the boot thread has nothing else to do: sleep until the next interrupt,

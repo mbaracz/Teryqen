@@ -22,6 +22,7 @@ pub const PRESENT: u64 = 1 << 0;
 pub const WRITABLE: u64 = 1 << 1;
 pub const USER: u64 = 1 << 2;
 pub const NO_EXECUTE: u64 = 1 << 63;
+pub const NO_CACHE: u64 = (1 << 3) | (1 << 4); // write-through + cache disable, for devices
 
 const ADDRESS_MASK: u64 = 0x000f_ffff_ffff_f000;
 const page_size = pmm.page_size;
@@ -148,6 +149,19 @@ pub fn init() void {
         : [pml4] "r" (pml4),
         : .{ .memory = true });
     log.info("own page tables active, direct map {d} MiB", .{pages * page_size / (1024 * 1024)});
+}
+
+/// Makes sure physical memory [phys, phys + len) can be reached through the
+/// direct map, mapping the pages that aren't yet. For device registers and
+/// firmware tables that aren't in the memory map Limine gives us.
+/// Returns the virtual address of `phys`.
+pub fn mapPhysical(phys: u64, len: u64, flags: u64) u64 {
+    const hhdm = limine.hhdmOffset().?;
+    var page = std.mem.alignBackward(u64, phys, page_size);
+    while (page < phys + len) : (page += page_size) {
+        if (!isMapped(hhdm + page)) map(hhdm + page, page, WRITABLE | NO_EXECUTE | flags);
+    }
+    return hhdm + phys;
 }
 
 pub fn kernelRoot() u64 {

@@ -1,5 +1,6 @@
-// PS/2 keyboard. No interrupts yet (that needs the I/O APIC, which needs
-// ACPI...), so a thread just checks the controller every tick.
+// PS/2 keyboard. Key presses come in as an interrupt (IRQ 1 through the
+// I/O APIC, vector 33). If there's no I/O APIC, a thread checks the
+// controller every tick instead, like it did before.
 //
 // The controller translates to scancode set 1: one byte per key press, the
 // same byte + 0x80 on release. US layout.
@@ -7,6 +8,12 @@
 const std = @import("std");
 const cpu = @import("cpu.zig");
 const thread = @import("thread.zig");
+const timer = @import("timer.zig");
+const ioapic = @import("ioapic.zig");
+
+const log = std.log.scoped(.keyboard);
+
+pub const vector = 33;
 
 const DATA = 0x60;
 const STATUS = 0x64;
@@ -59,8 +66,51 @@ var input: [256]u8 = undefined;
 var input_len: usize = 0;
 var input_waiters: thread.WaitQueue = .{};
 
-/// Thread entry: polls the keyboard forever and keeps what's typed for read().
-pub fn run(_: usize) callconv(.c) noreturn {
+/// Turns on the keyboard interrupt in the PS/2 controller and the I/O APIC.
+pub fn init() void {
+    // throw away whatever the firmware left in the buffer
+    while (cpu.inb(STATUS) & 1 != 0) _ = cpu.inb(DATA);
+    // controller config byte: bit 0 = interrupt for the keyboard port,
+    // bit 4 = keyboard clock off. Read it (command 0x20), fix, write (0x60).
+    controllerCommand(0x20);
+    var config = readData() orelse return log.err("PS/2 controller doesn't answer", .{});
+    config |= 1 << 0;
+    config &= ~@as(u8, 1 << 4);
+    controllerCommand(0x60);
+    waitWritable();
+    cpu.outb(DATA, config);
+    ioapic.route(1, vector);
+    log.info("keyboard on IRQ 1", .{});
+}
+
+/// Called from the interrupt handler.
+pub fn onInterrupt() void {
+    while (cpu.inb(STATUS) & 1 != 0) {
+        if (decode(cpu.inb(DATA))) |c| typed(c);
+    }
+    timer.eoi();
+}
+
+fn controllerCommand(c: u8) void {
+    waitWritable();
+    cpu.outb(STATUS, c);
+}
+
+fn waitWritable() void {
+    var tries: u32 = 0;
+    while (cpu.inb(STATUS) & 2 != 0 and tries < 100_000) : (tries += 1) {}
+}
+
+fn readData() ?u8 {
+    var tries: u32 = 0;
+    while (cpu.inb(STATUS) & 1 == 0) : (tries += 1) {
+        if (tries == 100_000) return null;
+    }
+    return cpu.inb(DATA);
+}
+
+/// Thread entry for when there are no interrupts: polls the keyboard forever.
+pub fn poll(_: usize) callconv(.c) noreturn {
     // throw away whatever the firmware left in the buffer
     while (cpu.inb(STATUS) & 1 != 0) _ = cpu.inb(DATA);
     while (true) {
