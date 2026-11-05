@@ -1,4 +1,4 @@
-// IDT for the 32 CPU exceptions (+ timer and keyboard interrupts). Before this, any exception (bad pointer,
+// IDT for the 32 CPU exceptions (+ timer, keyboard and disk interrupts). Before this, any exception (bad pointer,
 // ud2...) made QEMU triple fault and reboot without saying anything.
 //
 // Every vector gets a small stub (generated at comptime) that pushes a fake
@@ -9,6 +9,7 @@ const std = @import("std");
 const gdt = @import("gdt.zig");
 const timer = @import("timer.zig");
 const keyboard = @import("keyboard.zig");
+const virtio_blk = @import("virtio_blk.zig");
 const process = @import("process.zig");
 
 const log = std.log.scoped(.cpu);
@@ -82,6 +83,7 @@ pub fn init() void {
     setGate(timer.vector, @intFromPtr(&stub(timer.vector)));
     setGate(timer.spurious_vector, @intFromPtr(&stub(timer.spurious_vector)));
     setGate(keyboard.vector, @intFromPtr(&stub(keyboard.vector)));
+    inline for (virtio_blk.first_vector..virtio_blk.first_vector + 4) |v| setGate(v, @intFromPtr(&stub(v)));
     const ptr = Pointer{ .limit = @sizeOf(@TypeOf(idt)) - 1, .base = @intFromPtr(&idt) };
     asm volatile ("lidt (%[ptr])"
         :
@@ -151,6 +153,7 @@ export fn handleException(frame: *Frame) callconv(.c) void {
     switch (frame.vector) {
         timer.vector => return timer.onTick(),
         keyboard.vector => return keyboard.onInterrupt(),
+        virtio_blk.first_vector...virtio_blk.first_vector + 3 => return virtio_blk.onInterrupt(frame.vector - virtio_blk.first_vector),
         // spurious interrupt from the APIC, nothing to do (and no EOI)
         timer.spurious_vector => return,
         // breakpoint (int3) is harmless, just continue after it

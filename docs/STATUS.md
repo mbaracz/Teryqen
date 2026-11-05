@@ -63,7 +63,9 @@ kernel half is shared), so they all use the same addresses without seeing
 each other.
 
 Disks: PCI is scanned for virtio disks (kernel/pci.zig), the driver uses the
-legacy virtio interface (I/O ports) and polls instead of interrupts. Disk 0
+legacy virtio interface (I/O ports). Finished requests come as MSI-X
+interrupts (no I/O APIC needed), the waiting thread sleeps until then; only
+at boot, before there are threads, it polls. Disk 0
 is the boot image (read only, the kernel checks its MBR and GPT header at
 boot), disk 1 is zig-out/data.img for saving files.
 
@@ -95,7 +97,7 @@ through the kernel.
 - [x] sleeping threads (wait for N ticks without spinning)
 - [x] keyboard input + a text console on the screen
 - [x] keyboard interrupt instead of polling (needs the I/O APIC -> ACPI tables)
-- [ ] virtio disk interrupts too, instead of polling
+- [x] virtio disk interrupts too, instead of polling (MSI-X)
 - [x] user mode: run code in ring 3, syscalls
 - [x] own page tables per process
 - [x] load real programs (ELF files) instead of a blob of asm
@@ -115,7 +117,7 @@ through the kernel.
 
 - higher half kernel, linker scripts
 - bitmap allocator is slow (linear search), fine while nothing allocates much
-- virtio disk: polling, one request at a time, interrupts off while it waits
+- virtio disk: one request at a time per disk
 - heap: pages cut into small pieces are never given back, and big
   allocations never reuse virtual addresses. Fine for now.
 - syscall entry uses a global for the kernel stack, fine with one CPU

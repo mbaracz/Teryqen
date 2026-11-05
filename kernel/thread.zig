@@ -107,6 +107,11 @@ pub fn sleepTicks(ticks: u64) void {
     freeDead();
 }
 
+/// The boot thread is the idle thread, it must always be ready to run.
+pub fn canSleep() bool {
+    return current != &boot_thread;
+}
+
 /// Makes every thread sleeping on `queue` ready again.
 pub fn wakeAll(queue: *WaitQueue) void {
     const irq = cpu.disableInterrupts();
