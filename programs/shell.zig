@@ -23,11 +23,12 @@ fn main() void {
 
 fn run(line: []const u8) void {
     if (line.len == 0) return;
+    if (std.mem.indexOfScalar(u8, line, '|') != null) return runPipeline(line);
     var words = std.mem.tokenizeScalar(u8, line, ' ');
     const command = words.next().?;
 
     if (std.mem.eql(u8, command, "help")) {
-        sys.print("built in: help, echo <text> [> file], cd <dir>, pwd, sync\nprograms: ls, cat, mkdir, rm, sleep, uptime, hello\nfiles in /data are kept after sync\n");
+        sys.print("built in: help, echo <text> [> file], cd <dir>, pwd, sync\nprograms: ls, cat, wc, mkdir, rm, sleep, uptime, hello\na | b runs both, a's output goes to b\nfiles in /data are kept after sync\n");
         return;
     }
     if (std.mem.eql(u8, command, "sync")) {
@@ -58,6 +59,40 @@ fn run(line: []const u8) void {
     };
     const code = sys.wait(pid);
     if (code != 0) sys.printf("{s} exited with {d}\n", .{ command, code });
+}
+
+// ls /bin | wc: every program's stdout goes into a pipe that is the next
+// one's stdin. Only programs, no built-ins here.
+fn runPipeline(line: []const u8) void {
+    var pids: [8]u64 = undefined;
+    var count: usize = 0;
+    var prev_read: ?u64 = null; // stdin for the next program
+    var stages = std.mem.splitScalar(u8, line, '|');
+    while (stages.next()) |stage_untrimmed| {
+        const stage = std.mem.trim(u8, stage_untrimmed, " ");
+        const last = stages.peek() == null;
+        var out: ?sys.Pipe = null;
+        if (!last) out = sys.pipe() orelse {
+            sys.print("can't make a pipe\n");
+            break;
+        };
+        var cmdline_buf: [128]u8 = undefined;
+        const cmdline = std.fmt.bufPrint(&cmdline_buf, "/bin/{s}", .{stage}) catch "";
+        const pid = sys.spawnWith(cmdline, prev_read, if (out) |o| o.write else null);
+        // the programs have their own copies of the pipe ends now; if the
+        // shell kept them, the reader would never see the end of the input
+        if (prev_read) |fd| sys.close(fd);
+        if (out) |o| sys.close(o.write);
+        prev_read = if (out) |o| o.read else null;
+        if (pid) |p| {
+            if (count < pids.len) {
+                pids[count] = p;
+                count += 1;
+            }
+        } else sys.printf("{s}: not found\n", .{stage});
+    }
+    if (prev_read) |fd| sys.close(fd);
+    for (pids[0..count]) |pid| _ = sys.wait(pid);
 }
 
 // echo some text

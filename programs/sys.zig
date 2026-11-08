@@ -34,9 +34,25 @@ pub fn read(fd: u64, buf: []u8) ?usize {
     return result(syscall(3, fd, @intFromPtr(buf.ptr), buf.len));
 }
 
-/// Starts a program: "bin/cat etc/motd". Returns its pid.
+/// Starts a program: "bin/cat etc/motd". Returns its pid. It gets my stdin
+/// and stdout.
 pub fn spawn(cmdline: []const u8) ?u64 {
-    return result(syscall(4, @intFromPtr(cmdline.ptr), cmdline.len, 0));
+    return spawnWith(cmdline, null, null);
+}
+
+/// Same, but with other fds as its stdin/stdout (null = mine).
+pub fn spawnWith(cmdline: []const u8, stdin_fd: ?u64, stdout_fd: ?u64) ?u64 {
+    const in: u64 = if (stdin_fd) |fd| fd + 1 else 0;
+    const out: u64 = if (stdout_fd) |fd| fd + 1 else 0;
+    return result(syscall(4, @intFromPtr(cmdline.ptr), cmdline.len, in | (out << 16)));
+}
+
+pub const Pipe = struct { read: u64, write: u64 };
+
+/// What's written to .write can be read from .read.
+pub fn pipe() ?Pipe {
+    const fds = result(syscall(17, 0, 0, 0)) orelse return null;
+    return .{ .read = fds & 0xffff_ffff, .write = fds >> 32 };
 }
 
 /// Waits until the program ends, returns its exit code.

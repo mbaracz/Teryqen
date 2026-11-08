@@ -104,7 +104,7 @@ export fn kmain() noreturn {
     } else {
         _ = thread.spawn(keyboard.poll, 0) catch @panic("can't start the keyboard thread");
     }
-    _ = process.spawn("bin/shell") orelse @panic("can't start the shell");
+    _ = process.spawn("bin/shell", null, null) orelse @panic("can't start the shell");
 
     // the boot thread has nothing else to do: sleep until the next interrupt,
     // show the uptime once a second

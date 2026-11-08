@@ -9,6 +9,7 @@ const paging = @import("paging.zig");
 const thread = @import("thread.zig");
 const elf = @import("elf.zig");
 const fs = @import("fs.zig");
+const Pipe = @import("pipe.zig").Pipe;
 
 const log = std.log.scoped(.process);
 
@@ -17,10 +18,37 @@ const stack_pages = 4; // 16 KiB, std.fmt in Debug mode wants quite a bit
 
 pub const failed = std.math.maxInt(u64);
 
-/// An open file: fd 0 is the keyboard and fd 1 the console, files start at 2.
 pub const File = struct {
     node: *fs.Node,
     pos: usize = 0,
+};
+
+/// What a file descriptor is. Programs start with fd 0 (stdin) and 1 (stdout)
+/// from whoever started them, normally the keyboard and the console.
+pub const Fd = union(enum) {
+    keyboard,
+    console,
+    file: File,
+    pipe_read: *Pipe,
+    pipe_write: *Pipe,
+
+    /// Another fd for the same thing (a pipe end counts one more user).
+    pub fn dup(fd: Fd) Fd {
+        switch (fd) {
+            .pipe_read => |p| p.open(false),
+            .pipe_write => |p| p.open(true),
+            else => {},
+        }
+        return fd;
+    }
+
+    pub fn close(fd: Fd) void {
+        switch (fd) {
+            .pipe_read => |p| p.close(false),
+            .pipe_write => |p| p.close(true),
+            else => {},
+        }
+    }
 };
 
 pub const Process = struct {
@@ -32,7 +60,7 @@ pub const Process = struct {
     // with the args syscall
     cmdline: [128]u8 = undefined,
     cmdline_len: usize = 0,
-    files: [8]?File = @splat(null),
+    files: [8]?Fd = .{ .keyboard, .console } ++ .{null} ** 6,
     // current directory, always a full path starting with /
     cwd: [128]u8 = .{'/'} ++ .{0} ** 127,
     cwd_len: usize = 1,
@@ -84,7 +112,7 @@ pub fn isOpen(node: *fs.Node) bool {
         if (!p.used) continue;
         if (p.exe == node and !p.done) return true;
         for (p.files) |f| {
-            if (f != null and f.?.node == node) return true;
+            if (f != null and f.? == .file and f.?.file.node == node) return true;
         }
     }
     return false;
@@ -92,8 +120,9 @@ pub fn isOpen(node: *fs.Node) bool {
 
 /// Starts the program named by the first word of `cmdline`. Returns its pid.
 /// The new program starts in the caller's current directory (or / if the
-/// kernel starts it).
-pub fn spawn(cmdline: []const u8) ?u64 {
+/// kernel starts it), with the caller's stdin/stdout unless `stdin`/`stdout`
+/// say otherwise.
+pub fn spawn(cmdline: []const u8, stdin: ?Fd, stdout: ?Fd) ?u64 {
     if (cmdline.len > 128) return null;
     var words = std.mem.tokenizeScalar(u8, cmdline, ' ');
     const path = words.next() orelse return null;
@@ -113,8 +142,14 @@ pub fn spawn(cmdline: []const u8) ?u64 {
             p.cwd = pp.cwd;
             p.cwd_len = pp.cwd_len;
         }
+        const in = stdin orelse if (parent) |pp| pp.files[0] orelse .keyboard else .keyboard;
+        const out = stdout orelse if (parent) |pp| pp.files[1] orelse .console else .console;
+        p.files[0] = in.dup();
+        p.files[1] = out.dup();
         p.exe = file;
         _ = thread.spawn(run, @intFromPtr(p)) catch {
+            p.files[0].?.close();
+            p.files[1].?.close();
             p.used = false;
             return null;
         };
@@ -174,7 +209,10 @@ fn run(arg: usize) callconv(.c) noreturn {
 pub fn exit(code: u64) noreturn {
     if (thread.process() != 0) {
         const p = current();
-        p.files = @splat(null);
+        for (&p.files) |*fd| {
+            if (fd.*) |f| f.close();
+            fd.* = null;
+        }
         p.exit_code = code;
         p.done = true;
         thread.wakeAll(&p.waiters);

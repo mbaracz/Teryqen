@@ -40,12 +40,14 @@ polls the keyboard instead. The text console on the screen
 
 There's a shell (programs/shell.zig)! It runs /bin/<name> with the rest of
 the line as arguments and waits for it to finish; `help`, `echo` (also
-`echo text > file`), `cd`, `pwd` and `sync` are built in. Programs: ls, cat,
+`echo text > file`), `cd`, `pwd` and `sync` are built in, and pipes work:
+`ls /bin | wc` (kernel/pipe.zig, 4 KiB buffer). Programs: ls, cat, wc,
 mkdir, rm, sleep, uptime, hello. Every program has a current directory
 (inherited from whoever started it), paths can be relative and use "..".
 Syscalls: exit, write, yield, read, spawn, wait, open, close, readdir, args,
-mkdir, remove, chdir, getcwd, sync, sleep, uptime. fd 0 is the keyboard,
-fd 1 the console. A thread waiting in read() or wait() sleeps on a wait
+mkdir, remove, chdir, getcwd, sync, sleep, uptime, pipe. fd 0/1 (stdin and
+stdout) come from whoever started the program: keyboard and console, or a
+pipe. A thread waiting in read() or wait() sleeps on a wait
 queue (thread.WaitQueue) and gets no CPU until it's woken. sleep() puts the
 thread on a list the timer interrupt checks every tick.
 
@@ -112,6 +114,9 @@ through the kernel.
 - [ ] subdirectories in /data, bigger files than... whatever fits in 16 MiB
 - [x] waiting in read()/wait() without spinning (sleep until woken up)
 - [x] sleep(ms) syscall (+ sleep and uptime programs)
+- [x] pipes in the shell (a | b | c)
+- [ ] `>` for programs too (ls > file), right now only echo can do it
+- [ ] Ctrl+C to stop a program, Ctrl+D for end of input
 
 ## Notes / things to read up on
 
