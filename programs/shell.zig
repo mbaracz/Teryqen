@@ -28,7 +28,7 @@ fn run(line: []const u8) void {
     const command = words.next().?;
 
     if (std.mem.eql(u8, command, "help")) {
-        sys.print("built in: help, echo <text> [> file], cd <dir>, pwd, sync\nprograms: ls, cat, wc, mkdir, rm, sleep, uptime, hello\na | b runs both, a's output goes to b\nfiles in /data are kept after sync\n");
+        sys.print("built in: help, echo <text> [> file], cd <dir>, pwd, sync\nprograms: ls, cat, wc, mkdir, rm, sleep, uptime, hello\na | b runs both, a's output goes to b; > file and < file work too\nfiles in /data are kept after sync\n");
         return;
     }
     if (std.mem.eql(u8, command, "sync")) {
@@ -47,18 +47,57 @@ fn run(line: []const u8) void {
     }
     if (std.mem.eql(u8, command, "echo")) return echo(words.rest());
 
-    var cmdline_buf: [128]u8 = undefined;
-    // "/bin", so it works from any directory
-    const cmdline = std.fmt.bufPrint(&cmdline_buf, "/bin/{s}", .{line}) catch {
-        sys.print("line too long\n");
-        return;
-    };
-    const pid = sys.spawn(cmdline) orelse {
-        sys.printf("{s}: not found\n", .{command});
-        return;
-    };
+    const pid = startProgram(line, null, null) orelse return;
     const code = sys.wait(pid);
     if (code != 0) sys.printf("{s} exited with {d}\n", .{ command, code });
+}
+
+/// Starts one program from a piece of the line like "ls /bin > list" or
+/// "wc < notes": "> file" and "< file" become its stdout/stdin, the other
+/// words are its command line. `stdin`/`stdout` come from a pipe, or null.
+fn startProgram(stage: []const u8, stdin: ?u64, stdout: ?u64) ?u64 {
+    var cmdline_buf: [128]u8 = undefined;
+    var w: std.Io.Writer = .fixed(&cmdline_buf);
+    w.writeAll("/bin/") catch {}; // "/bin", so it works from any directory
+    var in = stdin;
+    var out = stdout;
+    var opened: [2]?u64 = .{ null, null }; // closed again once it's started
+    defer for (opened) |fd| if (fd) |f| sys.close(f);
+
+    var words = std.mem.tokenizeScalar(u8, stage, ' ');
+    var first = true;
+    while (words.next()) |word| {
+        if (std.mem.eql(u8, word, ">") or std.mem.eql(u8, word, "<")) {
+            const writing = word[0] == '>';
+            const path = words.next() orelse {
+                sys.print("missing file name after > or <\n");
+                return null;
+            };
+            const fd = sys.open(path, if (writing) .create else .read) orelse {
+                sys.printf("can't open {s}\n", .{path});
+                return null;
+            };
+            if (writing) {
+                out = fd;
+                opened[0] = fd;
+            } else {
+                in = fd;
+                opened[1] = fd;
+            }
+            continue;
+        }
+        if (!first) w.writeAll(" ") catch {};
+        w.writeAll(word) catch {
+            sys.print("line too long\n");
+            return null;
+        };
+        first = false;
+    }
+    if (first) return null; // nothing to run
+    return sys.spawnWith(w.buffered(), in, out) orelse {
+        sys.printf("{s}: not found\n", .{w.buffered()[5..]});
+        return null;
+    };
 }
 
 // ls /bin | wc: every program's stdout goes into a pipe that is the next
@@ -76,9 +115,7 @@ fn runPipeline(line: []const u8) void {
             sys.print("can't make a pipe\n");
             break;
         };
-        var cmdline_buf: [128]u8 = undefined;
-        const cmdline = std.fmt.bufPrint(&cmdline_buf, "/bin/{s}", .{stage}) catch "";
-        const pid = sys.spawnWith(cmdline, prev_read, if (out) |o| o.write else null);
+        const pid = startProgram(stage, prev_read, if (out) |o| o.write else null);
         // the programs have their own copies of the pipe ends now; if the
         // shell kept them, the reader would never see the end of the input
         if (prev_read) |fd| sys.close(fd);
@@ -89,7 +126,7 @@ fn runPipeline(line: []const u8) void {
                 pids[count] = p;
                 count += 1;
             }
-        } else sys.printf("{s}: not found\n", .{stage});
+        }
     }
     if (prev_read) |fd| sys.close(fd);
     for (pids[0..count]) |pid| _ = sys.wait(pid);
