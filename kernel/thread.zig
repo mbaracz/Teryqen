@@ -24,6 +24,8 @@ pub const Thread = struct {
     ticks_left: u32 = slice_ticks,
     address_space: u64 = 0, // PML4 of a user process, 0 = kernel only
     wake_at: u64 = 0, // tick to wake up at, while in `sleeping`
+    waiting_on: ?*std.DoublyLinkedList = null, // the list it sleeps in, if any
+    killed: bool = false, // Ctrl+C: stop at the next chance
     process: usize = 0, // syscall.zig keeps its *Process here
     node: std.DoublyLinkedList.Node = .{},
 };
@@ -89,6 +91,7 @@ pub fn sleepOn(queue: *WaitQueue) void {
     std.debug.assert(!cpu.disableInterrupts());
     if (current == &boot_thread) @panic("the boot thread can't sleep");
     queue.list.append(&current.node);
+    current.waiting_on = &queue.list;
     const next = ready.popFirst() orelse @panic("no thread left to run");
     switchTo(fromNode(next));
     freeDead();
@@ -102,6 +105,7 @@ pub fn sleepTicks(ticks: u64) void {
     if (current == &boot_thread) @panic("the boot thread can't sleep");
     current.wake_at = @import("timer.zig").ticksSinceBoot() + @max(ticks, 1);
     sleeping.append(&current.node);
+    current.waiting_on = &sleeping;
     const next = ready.popFirst() orelse @panic("no thread left to run");
     switchTo(fromNode(next));
     freeDead();
@@ -116,7 +120,31 @@ pub fn canSleep() bool {
 pub fn wakeAll(queue: *WaitQueue) void {
     const irq = cpu.disableInterrupts();
     defer cpu.restoreInterrupts(irq);
-    while (queue.list.popFirst()) |node| ready.append(node);
+    while (queue.list.popFirst()) |node| makeReady(node);
+}
+
+fn makeReady(node: *std.DoublyLinkedList.Node) void {
+    fromNode(node).waiting_on = null;
+    ready.append(node);
+}
+
+/// Ctrl+C: marks the thread to stop and wakes it up if it sleeps. Loops that
+/// sleep check wasKilled() and give up; the program ends when it goes back
+/// to user mode (see syscall.zig and idt.zig). Interrupts must be off.
+pub fn kill(t: *Thread) void {
+    t.killed = true;
+    if (t.waiting_on) |list| {
+        list.remove(&t.node);
+        makeReady(&t.node);
+    }
+}
+
+pub fn wasKilled() bool {
+    return current.killed;
+}
+
+pub fn currentThread() *Thread {
+    return current;
 }
 
 pub fn exit() noreturn {
@@ -140,7 +168,7 @@ pub fn onTick() void {
         node = n.next;
         if (fromNode(n).wake_at <= now) {
             sleeping.remove(n);
-            ready.append(n);
+            makeReady(n);
         }
     }
 

@@ -100,6 +100,13 @@ export fn syscallEntry() callconv(.naked) void {
 const failed = process.failed;
 
 export fn handleSyscall(number: u64, a: u64, b: u64, c: u64) callconv(.c) u64 {
+    const result = doSyscall(number, a, b, c);
+    // Ctrl+C while in here: stop before going back to the program
+    if (thread.wasKilled()) process.exit(130);
+    return result;
+}
+
+fn doSyscall(number: u64, a: u64, b: u64, c: u64) u64 {
     const p = process.current();
     switch (number) {
         0 => {

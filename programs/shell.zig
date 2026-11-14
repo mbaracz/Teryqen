@@ -49,7 +49,8 @@ fn run(line: []const u8) void {
 
     const pid = startProgram(line, null, null) orelse return;
     const code = sys.wait(pid);
-    if (code != 0) sys.printf("{s} exited with {d}\n", .{ command, code });
+    // 130 = stopped with Ctrl+C, the kernel already printed ^C
+    if (code != 0 and code != 130) sys.printf("{s} exited with {d}\n", .{ command, code });
 }
 
 /// Starts one program from a piece of the line like "ls /bin > list" or
@@ -164,6 +165,10 @@ fn readLine(buf: []u8) []const u8 {
             0x08 => if (len > 0) {
                 len -= 1;
                 sys.print(&c);
+            },
+            3 => { // Ctrl+C: forget this line
+                sys.print("^C\n");
+                return "";
             },
             else => if (len < buf.len and c[0] >= ' ') {
                 buf[len] = c[0];

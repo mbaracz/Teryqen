@@ -10,6 +10,7 @@ const cell_w = (font.width + 1) * scale;
 const cell_h = (font.height + 3) * scale;
 
 var screen: fb.Screen = undefined;
+var ready = false; // no framebuffer -> write() does nothing
 var top: usize = 0; // y where the console starts, above it is the title
 var cols: usize = 0;
 var rows: usize = 0;
@@ -25,10 +26,12 @@ pub fn init(s: fb.Screen, y: usize) void {
     rows = (s.height - y - 32) / cell_h;
     fg = s.rgb(0xe6, 0xe8, 0xee);
     bg = s.rgb(0x1c, 0x1f, 0x26);
+    ready = true;
     drawCursor(fg);
 }
 
 pub fn write(text: []const u8) void {
+    if (!ready) return;
     // keyboard thread and user programs both write here
     const irq = cpu.disableInterrupts();
     defer cpu.restoreInterrupts(irq);

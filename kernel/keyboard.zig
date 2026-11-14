@@ -10,10 +10,15 @@ const cpu = @import("cpu.zig");
 const thread = @import("thread.zig");
 const timer = @import("timer.zig");
 const ioapic = @import("ioapic.zig");
+const console = @import("console.zig");
+const process = @import("process.zig");
 
 const log = std.log.scoped(.keyboard);
 
 pub const vector = 33;
+
+const CTRL_C = 3;
+const CTRL_D = 4;
 
 const DATA = 0x60;
 const STATUS = 0x64;
@@ -21,11 +26,13 @@ const STATUS = 0x64;
 const normal = "\x00\x1b1234567890-=\x08\tqwertyuiop[]\n\x00asdfghjkl;'`\x00\\zxcvbnm,./\x00*\x00 ";
 const shifted = "\x00\x1b!@#$%^&*()_+\x08\tQWERTYUIOP{}\n\x00ASDFGHJKL:\"~\x00|ZXCVBNM<>?\x00*\x00 ";
 
+const CTRL = 0x1d;
 const LEFT_SHIFT = 0x2a;
 const RIGHT_SHIFT = 0x36;
 const CAPS_LOCK = 0x3a;
 
 var shift = false;
+var ctrl = false;
 var caps = false;
 var extended = false;
 
@@ -47,6 +54,10 @@ fn decode(byte: u8) ?u8 {
             shift = pressed;
             return null;
         },
+        CTRL => {
+            ctrl = pressed;
+            return null;
+        },
         CAPS_LOCK => {
             if (pressed) caps = !caps;
             return null;
@@ -56,6 +67,7 @@ fn decode(byte: u8) ?u8 {
     if (!pressed or key >= normal.len or normal[key] == 0) return null;
     const c = normal[key];
     if (std.ascii.isAlphabetic(c)) {
+        if (ctrl) return c - 'a' + 1; // Ctrl+A = 1 ... Ctrl+Z = 26
         return if (shift != caps) std.ascii.toUpper(c) else c;
     }
     return if (shift) shifted[key] else c;
@@ -124,6 +136,12 @@ pub fn poll(_: usize) callconv(.c) noreturn {
 fn typed(c: u8) void {
     const irq = cpu.disableInterrupts();
     defer cpu.restoreInterrupts(irq);
+    if (c == CTRL_C and process.interruptAll() > 0) {
+        // stopped whatever was running (not the shell). If nothing was, the
+        // shell gets the Ctrl+C and drops the line being typed.
+        console.write("^C\n");
+        return;
+    }
     if (input_len < input.len) {
         input[input_len] = c;
         input_len += 1;
@@ -135,10 +153,23 @@ fn typed(c: u8) void {
 /// nothing can sneak in between the check and the sleep (syscalls are).
 pub fn read(buf: []u8) usize {
     if (buf.len == 0) return 0;
-    while (input_len == 0) thread.sleepOn(&input_waiters);
-    const n = @min(buf.len, input_len);
+    while (input_len == 0) {
+        if (thread.wasKilled()) return 0;
+        thread.sleepOn(&input_waiters);
+    }
+    // Ctrl+D = end of input: read() returns 0 once, and stops before it
+    const eof = std.mem.indexOfScalar(u8, input[0..input_len], CTRL_D);
+    if (eof == 0) {
+        take(1);
+        return 0;
+    }
+    const n = @min(buf.len, eof orelse input_len);
     @memcpy(buf[0..n], input[0..n]);
+    take(n);
+    return n;
+}
+
+fn take(n: usize) void {
     std.mem.copyForwards(u8, input[0 .. input_len - n], input[n..input_len]);
     input_len -= n;
-    return n;
 }

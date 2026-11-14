@@ -11,6 +11,7 @@ const timer = @import("timer.zig");
 const keyboard = @import("keyboard.zig");
 const virtio_blk = @import("virtio_blk.zig");
 const process = @import("process.zig");
+const thread = @import("thread.zig");
 
 const log = std.log.scoped(.cpu);
 
@@ -151,15 +152,20 @@ export fn interruptCommon() callconv(.naked) void {
 
 export fn handleException(frame: *Frame) callconv(.c) void {
     switch (frame.vector) {
-        timer.vector => return timer.onTick(),
-        keyboard.vector => return keyboard.onInterrupt(),
-        virtio_blk.first_vector...virtio_blk.first_vector + 3 => return virtio_blk.onInterrupt(frame.vector - virtio_blk.first_vector),
+        timer.vector => timer.onTick(),
+        keyboard.vector => keyboard.onInterrupt(),
+        virtio_blk.first_vector...virtio_blk.first_vector + 3 => virtio_blk.onInterrupt(frame.vector - virtio_blk.first_vector),
         // spurious interrupt from the APIC, nothing to do (and no EOI)
-        timer.spurious_vector => return,
+        timer.spurious_vector => {},
         // breakpoint (int3) is harmless, just continue after it
-        3 => return,
-        else => {},
+        3 => {},
+        else => return crashed(frame),
     }
+    // back to a user program that got Ctrl+C: stop it instead
+    if (frame.cs & 3 == 3 and thread.wasKilled()) process.exit(130);
+}
+
+fn crashed(frame: *Frame) void {
     if (frame.cs & 3 == 3) {
         // a user program crashed, that's its problem, not the kernel's
         log.err("user program: exception {d} ({s}) at rip 0x{x}, killing it", .{ frame.vector, names[frame.vector], frame.rip });

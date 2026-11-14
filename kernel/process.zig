@@ -65,6 +65,9 @@ pub const Process = struct {
     cwd: [128]u8 = .{'/'} ++ .{0} ** 127,
     cwd_len: usize = 1,
     exe: ?*fs.Node = null, // the program file, found by spawn
+    thread: ?*thread.Thread = null, // set once it runs
+    killed: bool = false, // Ctrl+C came before it even started
+    ignores_ctrl_c: bool = false, // the shell, started by the kernel
 
     pub fn args(p: *const Process) []const u8 {
         return p.cmdline[0..p.cmdline_len];
@@ -141,7 +144,7 @@ pub fn spawn(cmdline: []const u8, stdin: ?Fd, stdout: ?Fd) ?u64 {
         if (parent) |pp| {
             p.cwd = pp.cwd;
             p.cwd_len = pp.cwd_len;
-        }
+        } else p.ignores_ctrl_c = true;
         const in = stdin orelse if (parent) |pp| pp.files[0] orelse .keyboard else .keyboard;
         const out = stdout orelse if (parent) |pp| pp.files[1] orelse .console else .console;
         p.files[0] = in.dup();
@@ -162,9 +165,25 @@ pub fn spawn(cmdline: []const u8, stdin: ?Fd, stdout: ?Fd) ?u64 {
 pub fn wait(pid: u64) u64 {
     if (pid >= processes.len or !processes[pid].used) return failed;
     const p = &processes[pid];
-    while (!p.done) thread.sleepOn(&p.waiters);
+    while (!p.done) {
+        if (thread.wasKilled()) return failed;
+        thread.sleepOn(&p.waiters);
+    }
     p.used = false;
     return p.exit_code;
+}
+
+/// Ctrl+C: stops every program except the ones that ignore it (the shell).
+/// Called from the keyboard interrupt. Returns how many it stopped.
+pub fn interruptAll() usize {
+    var count: usize = 0;
+    for (&processes) |*p| {
+        if (!p.used or p.done or p.ignores_ctrl_c) continue;
+        p.killed = true;
+        if (p.thread) |t| thread.kill(t);
+        count += 1;
+    }
+    return count;
 }
 
 /// Thread entry: load the program into a new address space, give it a
@@ -172,6 +191,12 @@ pub fn wait(pid: u64) u64 {
 fn run(arg: usize) callconv(.c) noreturn {
     const p: *Process = @ptrFromInt(arg);
     thread.setProcess(arg);
+    {
+        const irq = cpu.disableInterrupts();
+        defer cpu.restoreInterrupts(irq);
+        p.thread = thread.currentThread();
+        if (p.killed) thread.kill(p.thread.?);
+    }
     var words = std.mem.tokenizeScalar(u8, p.args(), ' ');
     const path = words.next().?;
     const space = paging.newAddressSpace();

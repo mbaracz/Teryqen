@@ -43,7 +43,9 @@ the line as arguments and waits for it to finish; `help`, `echo` (also
 `echo text > file`), `cd`, `pwd` and `sync` are built in, and pipes work:
 `ls /bin | wc` (kernel/pipe.zig, 4 KiB buffer), and so do `> file` and
 `< file` for programs (the shell opens the file and passes it as the
-program's stdout/stdin). Programs: ls, cat, wc,
+program's stdout/stdin). Ctrl+C stops the running programs (not the shell;
+at the prompt it drops the line), Ctrl+D ends input for a program reading
+the keyboard (cat, wc). Programs: ls, cat, wc,
 mkdir, rm, sleep, uptime, hello. Every program has a current directory
 (inherited from whoever started it), paths can be relative and use "..".
 Syscalls: exit, write, yield, read, spawn, wait, open, close, readdir, args,
@@ -118,7 +120,7 @@ through the kernel.
 - [x] sleep(ms) syscall (+ sleep and uptime programs)
 - [x] pipes in the shell (a | b | c)
 - [x] `>` for programs too (ls > file), and `<` (wc < file)
-- [ ] Ctrl+C to stop a program, Ctrl+D for end of input
+- [x] Ctrl+C to stop a program, Ctrl+D for end of input
 
 ## Notes / things to read up on
 

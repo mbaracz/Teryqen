@@ -23,7 +23,7 @@ zig build run
 
 Zig downloads Limine by itself on the first build. It boots into a small
 shell, type `help`. Try `ls`, `cat /etc/motd`, `mkdir home`, `cd home`,
-`echo hi > test`.
+`echo hi > test`, `ls /bin | wc`. Ctrl+C stops a program.
 
 `kernel/` is the kernel, `programs/` are the user programs. They go into the
 initramfs together with the files in `initramfs/`; `tools/` has the program

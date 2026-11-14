@@ -20,7 +20,7 @@ pub const Pipe = struct {
 
     pub fn read(p: *Pipe, out: []u8) usize {
         while (p.len == 0) {
-            if (p.writers == 0) return 0; // end of file
+            if (p.writers == 0 or thread.wasKilled()) return 0; // end of file
             thread.sleepOn(&p.waiters);
         }
         const n = @min(out.len, p.len);
@@ -36,7 +36,7 @@ pub const Pipe = struct {
     pub fn write(p: *Pipe, data: []const u8) ?usize {
         var done: usize = 0;
         while (done < data.len) {
-            if (p.readers == 0) return null;
+            if (p.readers == 0 or thread.wasKilled()) return null;
             if (p.len == p.buf.len) {
                 thread.sleepOn(&p.waiters);
                 continue;
