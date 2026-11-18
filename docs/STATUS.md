@@ -49,9 +49,11 @@ the keyboard (cat, wc). Programs: ls, cat, wc,
 mkdir, rm, sleep, uptime, hello. Every program has a current directory
 (inherited from whoever started it), paths can be relative and use "..".
 Syscalls: exit, write, yield, read, spawn, wait, open, close, readdir, args,
-mkdir, remove, chdir, getcwd, sync, sleep, uptime, pipe. fd 0/1 (stdin and
-stdout) come from whoever started the program: keyboard and console, or a
-pipe. A thread waiting in read() or wait() sleeps on a wait
+mkdir, remove, chdir, getcwd, sync, sleep, uptime, pipe, handle_duplicate,
+handle_reduce. What a program has open are handles (like Fuchsia's): each
+has rights (read, write, duplicate, transfer) that the syscalls check, and
+rights can only be taken away, never added. Handle 0/1 (stdin and stdout)
+come from whoever started the program: keyboard and console, or a pipe. A thread waiting in read() or wait() sleeps on a wait
 queue (thread.WaitQueue) and gets no CPU until it's woken. sleep() puts the
 thread on a list the timer interrupt checks every tick.
 
@@ -121,6 +123,9 @@ through the kernel.
 - [x] pipes in the shell (a | b | c)
 - [x] `>` for programs too (ls > file), and `<` (wc < file)
 - [x] Ctrl+C to stop a program, Ctrl+D for end of input
+- [x] handles with rights instead of plain file descriptors
+- [ ] channels between programs (messages + passing handles), like Fuchsia
+- [ ] shared memory between programs
 
 ## Notes / things to read up on
 

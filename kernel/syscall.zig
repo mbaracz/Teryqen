@@ -3,17 +3,22 @@
 // A user program calls the kernel with the `syscall` instruction:
 //   rax = number, rdi/rsi/rdx = arguments, result comes back in rax
 //   (all ones = error).
-//   0 exit(code)            1 write(fd, ptr, len)   2 yield()
-//   3 read(fd, ptr, len)    4 spawn(ptr, len, fds)  5 wait(pid)
-//   6 open(ptr, len, flags) 7 close(fd)             8 readdir(fd, ptr, len)
+//   0 exit(code)            1 write(h, ptr, len)    2 yield()
+//   3 read(h, ptr, len)     4 spawn(ptr, len, hs)   5 wait(pid)
+//   6 open(ptr, len, flags) 7 close(h)              8 readdir(h, ptr, len)
 //   9 args(ptr, len)        10 mkdir(ptr, len)      11 remove(ptr, len)
 //  12 chdir(ptr, len)      13 getcwd(ptr, len)     14 sync()
-//  15 sleep(ms)            16 uptime() -> ms       17 pipe() -> fds
+//  15 sleep(ms)            16 uptime() -> ms       17 pipe() -> handles
+//  18 handle_duplicate(h, rights) -> new handle    19 handle_reduce(h, rights)
 // Paths can be relative to the current directory.
-// fd 0 is stdin, fd 1 stdout (the keyboard and the console, unless the
+// Handles are small numbers, every one has rights (read, write, duplicate,
+// transfer; process.Rights) that read/write/... check. Rights only shrink:
+// a duplicate gets at most what the original has, reduce takes some away.
+// Handle 0 is stdin, 1 stdout (the keyboard and the console, unless the
 // program was started with a pipe there). open() with flags 1 creates the
-// file (or empties it) for writing. pipe() returns read fd | write fd << 32,
-// spawn's `fds` is (stdin fd + 1) | (stdout fd + 1) << 16, 0 = keep mine.
+// file (or empties it) for writing. pipe() returns read h | write h << 32,
+// spawn's `hs` is (stdin h + 1) | (stdout h + 1) << 16, 0 = keep mine;
+// giving a handle to a program needs the transfer right.
 // The CPU jumps to syscallEntry with the user's rsp still loaded, so the
 // entry first switches to the thread's kernel stack.
 
@@ -115,8 +120,8 @@ fn doSyscall(number: u64, a: u64, b: u64, c: u64) u64 {
         },
         1 => {
             const data = userSlice(b, c, false) orelse return failed;
-            const fd = getFd(p, a) orelse return failed;
-            switch (fd.*) {
+            const h = getHandle(p, a, .{ .write = true }) orelse return failed;
+            switch (h.object) {
                 .console => {
                     serial.write(data);
                     if (console_ready) console.write(data);
@@ -141,8 +146,8 @@ fn doSyscall(number: u64, a: u64, b: u64, c: u64) u64 {
         },
         3 => {
             const buf = userSlice(b, c, true) orelse return failed;
-            const fd = getFd(p, a) orelse return failed;
-            switch (fd.*) {
+            const h = getHandle(p, a, .{ .read = true }) orelse return failed;
+            switch (h.object) {
                 .keyboard => return keyboard.read(buf),
                 .pipe_read => |pipe| return pipe.read(buf),
                 .file => |*file| {
@@ -160,8 +165,8 @@ fn doSyscall(number: u64, a: u64, b: u64, c: u64) u64 {
             const cmdline = userSlice(a, b, false) orelse return failed;
             const in_fd = c & 0xffff;
             const out_fd = (c >> 16) & 0xffff;
-            const stdin: ?process.Fd = if (in_fd == 0) null else (getFd(p, in_fd - 1) orelse return failed).*;
-            const stdout: ?process.Fd = if (out_fd == 0) null else (getFd(p, out_fd - 1) orelse return failed).*;
+            const stdin: ?process.Handle = if (in_fd == 0) null else (getHandle(p, in_fd - 1, .{ .transfer = true }) orelse return failed).*;
+            const stdout: ?process.Handle = if (out_fd == 0) null else (getHandle(p, out_fd - 1, .{ .transfer = true }) orelse return failed).*;
             return process.spawn(cmdline, stdin, stdout) orelse failed;
         },
         5 => return process.wait(a),
@@ -169,21 +174,22 @@ fn doSyscall(number: u64, a: u64, b: u64, c: u64) u64 {
             var buf: [256]u8 = undefined;
             const path = p.resolve(userSlice(a, b, false) orelse return failed, &buf) orelse return failed;
             const node = (if (c == 1) fs.create(path, false) else fs.lookup(path)) catch return failed;
-            return addFd(p, .{ .file = .{ .node = node } }) orelse failed;
+            const rights: process.Rights = if (c == 1 or node.is_dir) .all else .{ .read = true, .duplicate = true, .transfer = true };
+            return addHandle(p, .{ .object = .{ .file = .{ .node = node } }, .rights = rights }) orelse failed;
         },
         7 => {
-            const fd = getFd(p, a) orelse return failed;
-            fd.close();
-            p.files[a] = null;
+            const h = getHandle(p, a, .{}) orelse return failed;
+            h.close();
+            p.handles[a] = null;
             return 0;
         },
         8 => {
             // names of everything in the directory, one per line, "/" after
             // directories
             const buf = userSlice(b, c, true) orelse return failed;
-            const fd = getFd(p, a) orelse return failed;
-            if (fd.* != .file or !fd.file.node.is_dir) return failed;
-            const file = &fd.file;
+            const h = getHandle(p, a, .{ .read = true }) orelse return failed;
+            if (h.object != .file or !h.object.file.node.is_dir) return failed;
+            const file = &h.object.file;
             var w: std.Io.Writer = .fixed(buf);
             for (file.node.children.items) |child| {
                 w.print("{s}{s}\n", .{ child.getName(), if (child.is_dir) "/" else "" }) catch break;
@@ -235,36 +241,55 @@ fn doSyscall(number: u64, a: u64, b: u64, c: u64) u64 {
         16 => return timer.ticksSinceBoot() * (1000 / timer.hz),
         17 => {
             const pipe = pipe_mod.create() orelse return failed;
-            const r = addFd(p, .{ .pipe_read = pipe }) orelse {
+            const r = addHandle(p, .{ .object = .{ .pipe_read = pipe }, .rights = .{ .read = true, .duplicate = true, .transfer = true } }) orelse {
                 pipe.close(false);
                 pipe.close(true);
                 return failed;
             };
-            const w = addFd(p, .{ .pipe_write = pipe }) orelse {
-                p.files[r] = null;
+            const w = addHandle(p, .{ .object = .{ .pipe_write = pipe }, .rights = .{ .write = true, .duplicate = true, .transfer = true } }) orelse {
+                p.handles[r] = null;
                 pipe.close(false);
                 pipe.close(true);
                 return failed;
             };
             return r | (w << 32);
         },
+        18 => {
+            const h = getHandle(p, a, .{ .duplicate = true }) orelse return failed;
+            var copy = h.dup();
+            copy.rights = h.rights.intersect(@bitCast(@as(u8, @truncate(b))));
+            return addHandle(p, copy) orelse {
+                copy.close();
+                return failed;
+            };
+        },
+        19 => {
+            const h = getHandle(p, a, .{}) orelse return failed;
+            h.rights = h.rights.intersect(@bitCast(@as(u8, @truncate(b))));
+            return 0;
+        },
         else => return failed,
     }
 }
 
-fn getFd(p: *process.Process, fd: u64) ?*process.Fd {
-    if (fd >= p.files.len) return null;
-    if (p.files[fd]) |*f| return f;
+/// The handle, if the program has it and it has (at least) `needed` rights.
+fn getHandle(p: *process.Process, n: u64, needed: process.Rights) ?*process.Handle {
+    if (n >= p.handles.len) return null;
+    if (p.handles[n]) |*h| {
+        const want: u8 = @bitCast(needed);
+        if (@as(u8, @bitCast(h.rights)) & want != want) return null;
+        return h;
+    }
     return null;
 }
 
-fn addFd(p: *process.Process, fd: process.Fd) ?u64 {
-    for (&p.files, 0..) |*slot, n| {
+fn addHandle(p: *process.Process, h: process.Handle) ?u64 {
+    for (&p.handles, 0..) |*slot, n| {
         if (slot.* != null) continue;
-        slot.* = fd;
+        slot.* = h;
         return n;
     }
-    return null; // too many open files
+    return null; // too many open handles
 }
 
 /// A buffer from the user. It has to be memory the program can really use

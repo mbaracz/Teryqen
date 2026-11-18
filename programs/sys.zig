@@ -2,8 +2,18 @@
 
 const std = @import("std");
 
+// Handles: small numbers naming something the kernel keeps for this program
+// (keyboard, console, a file, a pipe end), each with rights.
 pub const stdin = 0;
 pub const stdout = 1;
+
+pub const Rights = packed struct(u8) {
+    read: bool = false,
+    write: bool = false,
+    duplicate: bool = false,
+    transfer: bool = false,
+    _: u4 = 0,
+};
 
 pub fn exit(code: u64) noreturn {
     _ = syscall(0, code, 0, 0);
@@ -113,6 +123,17 @@ pub fn sleep(ms: u64) void {
 /// Milliseconds since boot (in steps of 10).
 pub fn uptime() u64 {
     return syscall(16, 0, 0, 0);
+}
+
+/// A second handle to the same thing, with at most `rights` (never more than
+/// the original has). Needs the duplicate right.
+pub fn duplicate(handle: u64, rights: Rights) ?u64 {
+    return result(syscall(18, handle, @as(u8, @bitCast(rights)), 0));
+}
+
+/// Takes rights away from a handle, keeping only `rights`.
+pub fn reduce(handle: u64, rights: Rights) void {
+    _ = syscall(19, handle, @as(u8, @bitCast(rights)), 0);
 }
 
 const failed = std.math.maxInt(u64);

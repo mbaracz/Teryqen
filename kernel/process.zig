@@ -23,33 +23,67 @@ pub const File = struct {
     pos: usize = 0,
 };
 
-/// What a file descriptor is. Programs start with fd 0 (stdin) and 1 (stdout)
-/// from whoever started them, normally the keyboard and the console.
-pub const Fd = union(enum) {
+/// What a handle can do. Rights can only be taken away, never added: a
+/// duplicate gets at most what the original has.
+pub const Rights = packed struct(u8) {
+    read: bool = false,
+    write: bool = false,
+    duplicate: bool = false, // may make copies of this handle
+    transfer: bool = false, // may give it to another program
+    _: u4 = 0,
+
+    pub const all: Rights = .{ .read = true, .write = true, .duplicate = true, .transfer = true };
+
+    pub fn intersect(a: Rights, b: Rights) Rights {
+        return @bitCast(@as(u8, @bitCast(a)) & @as(u8, @bitCast(b)));
+    }
+};
+
+/// What a handle points at.
+pub const Object = union(enum) {
     keyboard,
     console,
     file: File,
     pipe_read: *Pipe,
     pipe_write: *Pipe,
 
-    /// Another fd for the same thing (a pipe end counts one more user).
-    pub fn dup(fd: Fd) Fd {
-        switch (fd) {
+    /// Another handle to the same thing (a pipe end counts one more user).
+    pub fn dup(o: Object) Object {
+        switch (o) {
             .pipe_read => |p| p.open(false),
             .pipe_write => |p| p.open(true),
             else => {},
         }
-        return fd;
+        return o;
     }
 
-    pub fn close(fd: Fd) void {
-        switch (fd) {
+    pub fn close(o: Object) void {
+        switch (o) {
             .pipe_read => |p| p.close(false),
             .pipe_write => |p| p.close(true),
             else => {},
         }
     }
 };
+
+/// A program's handle: what it points at + what the program may do with it.
+/// Handles are numbers (slots in the program's table); 0 is stdin and 1
+/// stdout, from whoever started the program.
+pub const Handle = struct {
+    object: Object,
+    rights: Rights,
+
+    pub fn dup(h: Handle) Handle {
+        return .{ .object = h.object.dup(), .rights = h.rights };
+    }
+
+    pub fn close(h: Handle) void {
+        h.object.close();
+    }
+};
+
+const keyboard_handle: Handle = .{ .object = .keyboard, .rights = .{ .read = true, .duplicate = true, .transfer = true } };
+const console_handle: Handle = .{ .object = .console, .rights = .{ .write = true, .duplicate = true, .transfer = true } };
 
 pub const Process = struct {
     used: bool = false,
@@ -60,7 +94,7 @@ pub const Process = struct {
     // with the args syscall
     cmdline: [128]u8 = undefined,
     cmdline_len: usize = 0,
-    files: [8]?Fd = .{ .keyboard, .console } ++ .{null} ** 6,
+    handles: [16]?Handle = .{ keyboard_handle, console_handle } ++ .{null} ** 14,
     // current directory, always a full path starting with /
     cwd: [128]u8 = .{'/'} ++ .{0} ** 127,
     cwd_len: usize = 1,
@@ -114,8 +148,8 @@ pub fn isOpen(node: *fs.Node) bool {
     for (&processes) |*p| {
         if (!p.used) continue;
         if (p.exe == node and !p.done) return true;
-        for (p.files) |f| {
-            if (f != null and f.? == .file and f.?.file.node == node) return true;
+        for (p.handles) |h| {
+            if (h != null and h.?.object == .file and h.?.object.file.node == node) return true;
         }
     }
     return false;
@@ -125,7 +159,7 @@ pub fn isOpen(node: *fs.Node) bool {
 /// The new program starts in the caller's current directory (or / if the
 /// kernel starts it), with the caller's stdin/stdout unless `stdin`/`stdout`
 /// say otherwise.
-pub fn spawn(cmdline: []const u8, stdin: ?Fd, stdout: ?Fd) ?u64 {
+pub fn spawn(cmdline: []const u8, stdin: ?Handle, stdout: ?Handle) ?u64 {
     if (cmdline.len > 128) return null;
     var words = std.mem.tokenizeScalar(u8, cmdline, ' ');
     const path = words.next() orelse return null;
@@ -145,14 +179,14 @@ pub fn spawn(cmdline: []const u8, stdin: ?Fd, stdout: ?Fd) ?u64 {
             p.cwd = pp.cwd;
             p.cwd_len = pp.cwd_len;
         } else p.ignores_ctrl_c = true;
-        const in = stdin orelse if (parent) |pp| pp.files[0] orelse .keyboard else .keyboard;
-        const out = stdout orelse if (parent) |pp| pp.files[1] orelse .console else .console;
-        p.files[0] = in.dup();
-        p.files[1] = out.dup();
+        const in = stdin orelse if (parent) |pp| pp.handles[0] orelse keyboard_handle else keyboard_handle;
+        const out = stdout orelse if (parent) |pp| pp.handles[1] orelse console_handle else console_handle;
+        p.handles[0] = in.dup();
+        p.handles[1] = out.dup();
         p.exe = file;
         _ = thread.spawn(run, @intFromPtr(p)) catch {
-            p.files[0].?.close();
-            p.files[1].?.close();
+            p.handles[0].?.close();
+            p.handles[1].?.close();
             p.used = false;
             return null;
         };
@@ -234,9 +268,9 @@ fn run(arg: usize) callconv(.c) noreturn {
 pub fn exit(code: u64) noreturn {
     if (thread.process() != 0) {
         const p = current();
-        for (&p.files) |*fd| {
-            if (fd.*) |f| f.close();
-            fd.* = null;
+        for (&p.handles) |*slot| {
+            if (slot.*) |h| h.close();
+            slot.* = null;
         }
         p.exit_code = code;
         p.done = true;
