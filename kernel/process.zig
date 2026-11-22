@@ -10,6 +10,7 @@ const thread = @import("thread.zig");
 const elf = @import("elf.zig");
 const fs = @import("fs.zig");
 const Pipe = @import("pipe.zig").Pipe;
+const channel = @import("channel.zig");
 
 const log = std.log.scoped(.process);
 
@@ -46,12 +47,14 @@ pub const Object = union(enum) {
     file: File,
     pipe_read: *Pipe,
     pipe_write: *Pipe,
+    channel: *channel.Endpoint,
 
-    /// Another handle to the same thing (a pipe end counts one more user).
+    /// Another handle to the same thing (pipe and channel ends count users).
     pub fn dup(o: Object) Object {
         switch (o) {
             .pipe_read => |p| p.open(false),
             .pipe_write => |p| p.open(true),
+            .channel => |e| e.open(),
             else => {},
         }
         return o;
@@ -61,6 +64,7 @@ pub const Object = union(enum) {
         switch (o) {
             .pipe_read => |p| p.close(false),
             .pipe_write => |p| p.close(true),
+            .channel => |e| e.close(),
             else => {},
         }
     }
@@ -158,8 +162,8 @@ pub fn isOpen(node: *fs.Node) bool {
 /// Starts the program named by the first word of `cmdline`. Returns its pid.
 /// The new program starts in the caller's current directory (or / if the
 /// kernel starts it), with the caller's stdin/stdout unless `stdin`/`stdout`
-/// say otherwise.
-pub fn spawn(cmdline: []const u8, stdin: ?Handle, stdout: ?Handle) ?u64 {
+/// say otherwise. `extra` becomes its handle 2 (a channel to talk to it).
+pub fn spawn(cmdline: []const u8, stdin: ?Handle, stdout: ?Handle, extra: ?Handle) ?u64 {
     if (cmdline.len > 128) return null;
     var words = std.mem.tokenizeScalar(u8, cmdline, ' ');
     const path = words.next() orelse return null;
@@ -183,10 +187,10 @@ pub fn spawn(cmdline: []const u8, stdin: ?Handle, stdout: ?Handle) ?u64 {
         const out = stdout orelse if (parent) |pp| pp.handles[1] orelse console_handle else console_handle;
         p.handles[0] = in.dup();
         p.handles[1] = out.dup();
+        if (extra) |e| p.handles[2] = e.dup();
         p.exe = file;
         _ = thread.spawn(run, @intFromPtr(p)) catch {
-            p.handles[0].?.close();
-            p.handles[1].?.close();
+            for (p.handles) |h| if (h) |hh| hh.close();
             p.used = false;
             return null;
         };

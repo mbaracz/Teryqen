@@ -50,12 +50,21 @@ pub fn spawn(cmdline: []const u8) ?u64 {
     return spawnWith(cmdline, null, null);
 }
 
-/// Same, but with other fds as its stdin/stdout (null = mine).
-pub fn spawnWith(cmdline: []const u8, stdin_fd: ?u64, stdout_fd: ?u64) ?u64 {
-    const in: u64 = if (stdin_fd) |fd| fd + 1 else 0;
-    const out: u64 = if (stdout_fd) |fd| fd + 1 else 0;
-    return result(syscall(4, @intFromPtr(cmdline.ptr), cmdline.len, in | (out << 16)));
+/// Same, but with other handles as its stdin/stdout (null = mine), and
+/// optionally one more handle that becomes its handle 2.
+pub fn spawnWith(cmdline: []const u8, stdin_h: ?u64, stdout_h: ?u64) ?u64 {
+    return spawnFull(cmdline, stdin_h, stdout_h, null);
 }
+
+pub fn spawnFull(cmdline: []const u8, stdin_h: ?u64, stdout_h: ?u64, extra_h: ?u64) ?u64 {
+    const in: u64 = if (stdin_h) |h| h + 1 else 0;
+    const out: u64 = if (stdout_h) |h| h + 1 else 0;
+    const extra: u64 = if (extra_h) |h| h + 1 else 0;
+    return result(syscall(4, @intFromPtr(cmdline.ptr), cmdline.len, in | (out << 16) | (extra << 32)));
+}
+
+/// What a program started with spawnFull gets as its extra handle.
+pub const extra_handle = 2;
 
 pub const Pipe = struct { read: u64, write: u64 };
 
@@ -136,7 +145,39 @@ pub fn reduce(handle: u64, rights: Rights) void {
     _ = syscall(19, handle, @as(u8, @bitCast(rights)), 0);
 }
 
+pub const Channel = struct { a: u64, b: u64 };
+
+/// Two connected endpoints: what's sent into one comes out of the other.
+pub fn channel() ?Channel {
+    const hs = result(syscall(20, 0, 0, 0)) orelse return null;
+    return .{ .a = hs & 0xffff_ffff, .b = hs >> 32 };
+}
+
+pub const ChannelError = error{ PeerClosed, Failed };
+
+/// Sends bytes (up to 64 KiB) and handles (up to 16, they move to the
+/// receiver: they're gone from this program afterwards).
+pub fn send(endpoint: u64, bytes: []const u8, handles: []const u64) ChannelError!void {
+    const call_args = [4]u64{ @intFromPtr(bytes.ptr), bytes.len, @intFromPtr(handles.ptr), handles.len };
+    const r = syscall(21, endpoint, @intFromPtr(&call_args), 0);
+    if (r == peer_closed) return error.PeerClosed;
+    if (r == failed) return error.Failed;
+}
+
+pub const Received = struct { bytes: []u8, handles: []u64 };
+
+/// Waits for a message. PeerClosed once the other end is gone and nothing
+/// is left.
+pub fn recv(endpoint: u64, bytes: []u8, handles: []u64) ChannelError!Received {
+    var call_args = [5]u64{ @intFromPtr(bytes.ptr), bytes.len, @intFromPtr(handles.ptr), handles.len, 0 };
+    const r = syscall(22, endpoint, @intFromPtr(&call_args), 0);
+    if (r == peer_closed) return error.PeerClosed;
+    if (r == failed) return error.Failed;
+    return .{ .bytes = bytes[0..r], .handles = handles[0..call_args[4]] };
+}
+
 const failed = std.math.maxInt(u64);
+const peer_closed = failed - 1;
 
 fn result(value: u64) ?u64 {
     return if (value == failed) null else value;

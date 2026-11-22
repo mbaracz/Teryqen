@@ -10,6 +10,8 @@
 //  12 chdir(ptr, len)      13 getcwd(ptr, len)     14 sync()
 //  15 sleep(ms)            16 uptime() -> ms       17 pipe() -> handles
 //  18 handle_duplicate(h, rights) -> new handle    19 handle_reduce(h, rights)
+//  20 channel_create() -> h0 | h1 << 32
+//  21 channel_send(h, *SendArgs)   22 channel_recv(h, *RecvArgs) -> bytes
 // Paths can be relative to the current directory.
 // Handles are small numbers, every one has rights (read, write, duplicate,
 // transfer; process.Rights) that read/write/... check. Rights only shrink:
@@ -17,8 +19,12 @@
 // Handle 0 is stdin, 1 stdout (the keyboard and the console, unless the
 // program was started with a pipe there). open() with flags 1 creates the
 // file (or empties it) for writing. pipe() returns read h | write h << 32,
-// spawn's `hs` is (stdin h + 1) | (stdout h + 1) << 16, 0 = keep mine;
-// giving a handle to a program needs the transfer right.
+// spawn's `hs` is (stdin h + 1) | (stdout h + 1) << 16 | (extra h + 1) << 32,
+// 0 = keep mine / none; extra becomes the new program's handle 2. Giving a
+// handle to a program needs the transfer right.
+// Channels (kernel/channel.zig): send and recv need more than 3 arguments,
+// so they get a pointer to a struct (SendArgs/RecvArgs below). recv returns
+// `peer_closed` when nothing is queued and the other end is gone.
 // The CPU jumps to syscallEntry with the user's rsp still loaded, so the
 // entry first switches to the thread's kernel stack.
 
@@ -34,6 +40,7 @@ const fs = @import("fs.zig");
 const datadisk = @import("datadisk.zig");
 const timer = @import("timer.zig");
 const pipe_mod = @import("pipe.zig");
+const channel = @import("channel.zig");
 const heap = @import("heap.zig");
 const paging = @import("paging.zig");
 
@@ -167,7 +174,9 @@ fn doSyscall(number: u64, a: u64, b: u64, c: u64) u64 {
             const out_fd = (c >> 16) & 0xffff;
             const stdin: ?process.Handle = if (in_fd == 0) null else (getHandle(p, in_fd - 1, .{ .transfer = true }) orelse return failed).*;
             const stdout: ?process.Handle = if (out_fd == 0) null else (getHandle(p, out_fd - 1, .{ .transfer = true }) orelse return failed).*;
-            return process.spawn(cmdline, stdin, stdout) orelse failed;
+            const extra_h = (c >> 32) & 0xffff;
+            const extra: ?process.Handle = if (extra_h == 0) null else (getHandle(p, extra_h - 1, .{ .transfer = true }) orelse return failed).*;
+            return process.spawn(cmdline, stdin, stdout, extra) orelse failed;
         },
         5 => return process.wait(a),
         6 => {
@@ -268,8 +277,85 @@ fn doSyscall(number: u64, a: u64, b: u64, c: u64) u64 {
             h.rights = h.rights.intersect(@bitCast(@as(u8, @truncate(b))));
             return 0;
         },
+        20 => {
+            const pair = channel.create() orelse return failed;
+            const h0 = addHandle(p, .{ .object = .{ .channel = &pair.ends[0] }, .rights = .all }) orelse {
+                pair.ends[0].close();
+                pair.ends[1].close();
+                return failed;
+            };
+            const h1 = addHandle(p, .{ .object = .{ .channel = &pair.ends[1] }, .rights = .all }) orelse {
+                p.handles[h0] = null;
+                pair.ends[0].close();
+                pair.ends[1].close();
+                return failed;
+            };
+            return h0 | (h1 << 32);
+        },
+        21 => return channelSend(p, a, b),
+        22 => return channelRecv(p, a, b),
         else => return failed,
     }
+}
+
+const SendArgs = extern struct { bytes: u64, bytes_len: u64, handles: u64, handles_len: u64 };
+const RecvArgs = extern struct { bytes: u64, bytes_len: u64, handles: u64, handles_len: u64, got_handles: u64 };
+pub const peer_closed = failed - 1;
+
+fn channelSend(p: *process.Process, h: u64, args_ptr: u64) u64 {
+    const ep = (getHandle(p, h, .{ .write = true }) orelse return failed).object;
+    if (ep != .channel) return failed;
+    const raw = userSlice(args_ptr, @sizeOf(SendArgs), false) orelse return failed;
+    const args = std.mem.bytesToValue(SendArgs, raw[0..@sizeOf(SendArgs)]);
+    if (args.bytes_len > channel.max_bytes or args.handles_len > channel.max_handles) return failed;
+    const bytes = userSliceBig(args.bytes, args.bytes_len, false) orelse return failed;
+    const numbers_raw = userSlice(args.handles, args.handles_len * 8, false) orelse return failed;
+    const numbers = std.mem.bytesAsSlice(u64, numbers_raw);
+    // check everything before taking any handle away from the sender
+    channel.canSend(ep.channel, bytes.len, numbers.len) catch |err| return if (err == error.PeerClosed) peer_closed else failed;
+    var moving: [channel.max_handles]process.Handle = undefined;
+    for (numbers, 0..) |n, i| {
+        if (n == h) return failed; // not the end we send through
+        for (numbers[0..i]) |earlier| if (earlier == n) return failed; // twice
+        const moved = getHandle(p, n, .{ .transfer = true }) orelse return failed;
+        // an end can't travel through its own channel
+        if (moved.object == .channel and moved.object.channel.pair == ep.channel.pair) return failed;
+        moving[i] = moved.*;
+    }
+    channel.send(ep.channel, bytes, moving[0..numbers.len]) catch return failed;
+    for (numbers) |n| p.handles[n] = null; // they're in the message now
+    return 0;
+}
+
+fn channelRecv(p: *process.Process, h: u64, args_ptr: u64) u64 {
+    const ep = (getHandle(p, h, .{ .read = true }) orelse return failed).object;
+    if (ep != .channel) return failed;
+    const raw = userSlice(args_ptr, @sizeOf(RecvArgs), true) orelse return failed;
+    const args = std.mem.bytesToValue(RecvArgs, raw[0..@sizeOf(RecvArgs)]);
+    const m = channel.waitMessage(ep.channel) orelse return peer_closed;
+    // the buffers have to be big enough, otherwise the message stays queued
+    if (m.bytes.len > args.bytes_len or m.handle_count > args.handles_len) return failed;
+    const bytes = userSliceBig(args.bytes, m.bytes.len, true) orelse return failed;
+    const numbers_raw = userSlice(args.handles, m.handle_count * 8, true) orelse return failed;
+    var free_slots: usize = 0;
+    for (p.handles) |slot| {
+        if (slot == null) free_slots += 1;
+    }
+    if (free_slots < m.handle_count) return failed;
+    @memcpy(bytes, m.bytes);
+    const numbers = std.mem.bytesAsSlice(u64, numbers_raw);
+    for (m.handles[0..m.handle_count], 0..) |moved, i| numbers[i] = addHandle(p, moved).?;
+    std.mem.writeInt(u64, raw[@offsetOf(RecvArgs, "got_handles")..][0..8], m.handle_count, .little);
+    const len = m.bytes.len;
+    channel.take(ep.channel);
+    return len;
+}
+
+/// Like userSlice, for buffers bigger than a page (channel messages).
+fn userSliceBig(ptr: u64, len: u64, kernel_writes: bool) ?[]u8 {
+    if (len > channel.max_bytes) return null;
+    if (!paging.userCanAccess(thread.addressSpace(), ptr, len, kernel_writes)) return null;
+    return @as([*]u8, @ptrFromInt(ptr))[0..len];
 }
 
 /// The handle, if the program has it and it has (at least) `needed` rights.
