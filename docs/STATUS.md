@@ -50,8 +50,8 @@ mkdir, rm, sleep, uptime, hello. Every program has a current directory
 (inherited from whoever started it), paths can be relative and use "..".
 Syscalls: exit, write, yield, read, spawn, wait, open, close, readdir, args,
 mkdir, remove, chdir, getcwd, sync, sleep, uptime, pipe, handle_duplicate,
-handle_reduce, channel_create, channel_send, channel_recv. What a program
-has open are handles (like Fuchsia's): each
+handle_reduce, channel_create, channel_send, channel_recv, memory_create,
+memory_map, memory_unmap. What a program has open are handles (like Fuchsia's): each
 has rights (read, write, duplicate, transfer) that the syscalls check, and
 rights can only be taken away, never added. Handle 0/1 (stdin and stdout)
 come from whoever started the program: keyboard and console, or a pipe;
@@ -62,7 +62,14 @@ with up to 16 handles that move from the sender to the receiver (transfer
 right needed, rights stay the same). At most 16 messages wait per endpoint.
 Receiving waits for a message, or says "peer closed" when the other end is
 gone. `ipcdemo` + `ipcworker` show it: the demo sends the worker a copy of
-its stdout handle, the worker prints through it and replies. A thread waiting in read() or wait() sleeps on a wait
+its stdout handle, the worker prints through it and replies.
+
+Shared memory (kernel/memory.zig): memory_create makes zeroed pages behind a
+handle; memory_map puts them into the program (writable only with the write
+right, never executable), so two programs can share pages: send the handle
+over a channel and map it on the other side. `shmdemo` + `shmworker` show
+it. Mappings go to their own area (0x1000_0000_0000 and up); the pages live
+as long as there's a handle or a mapping. A thread waiting in read() or wait() sleeps on a wait
 queue (thread.WaitQueue) and gets no CPU until it's woken. sleep() puts the
 thread on a list the timer interrupt checks every tick.
 
@@ -134,7 +141,7 @@ through the kernel.
 - [x] Ctrl+C to stop a program, Ctrl+D for end of input
 - [x] handles with rights instead of plain file descriptors
 - [x] channels between programs (messages + passing handles), like Fuchsia
-- [ ] shared memory between programs
+- [x] shared memory between programs
 - [ ] a "call" helper: send + wait for the reply
 
 ## Notes / things to read up on

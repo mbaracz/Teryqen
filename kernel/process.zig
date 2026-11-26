@@ -11,6 +11,7 @@ const elf = @import("elf.zig");
 const fs = @import("fs.zig");
 const Pipe = @import("pipe.zig").Pipe;
 const channel = @import("channel.zig");
+const MemoryObject = @import("memory.zig").MemoryObject;
 
 const log = std.log.scoped(.process);
 
@@ -48,6 +49,7 @@ pub const Object = union(enum) {
     pipe_read: *Pipe,
     pipe_write: *Pipe,
     channel: *channel.Endpoint,
+    memory: *MemoryObject,
 
     /// Another handle to the same thing (pipe and channel ends count users).
     pub fn dup(o: Object) Object {
@@ -55,6 +57,7 @@ pub const Object = union(enum) {
             .pipe_read => |p| p.open(false),
             .pipe_write => |p| p.open(true),
             .channel => |e| e.open(),
+            .memory => |m| m.open(),
             else => {},
         }
         return o;
@@ -65,6 +68,7 @@ pub const Object = union(enum) {
             .pipe_read => |p| p.close(false),
             .pipe_write => |p| p.close(true),
             .channel => |e| e.close(),
+            .memory => |m| m.close(),
             else => {},
         }
     }
@@ -86,6 +90,41 @@ pub const Handle = struct {
     }
 };
 
+pub const Mapping = struct { address: u64, object: *MemoryObject };
+
+/// Where memory_map puts things, far from the program and its stack.
+const map_area_start: u64 = 0x1000_0000_0000;
+const map_area_end: u64 = 0x2000_0000_0000;
+
+/// Maps the memory object's pages into the calling program. Writable only
+/// if asked for (and the handle allows it). Returns the address.
+pub fn mapMemory(p: *Process, m: *MemoryObject, writable: bool) ?u64 {
+    const slot = for (&p.mappings) |*slot| {
+        if (slot.* == null) break slot;
+    } else return null;
+    const address = p.next_map;
+    if (address + m.size() > map_area_end) return null;
+    const flags = paging.USER | paging.NO_EXECUTE | (if (writable) paging.WRITABLE else 0);
+    for (m.frames, 0..) |frame, i| paging.mapIn(thread.addressSpace(), address + i * pmm.page_size, frame, flags);
+    p.next_map = address + m.size() + pmm.page_size; // + a gap, so mappings don't touch
+    m.open(); // the mapping keeps it alive too
+    slot.* = .{ .address = address, .object = m };
+    return address;
+}
+
+pub fn unmapMemory(p: *Process, address: u64) bool {
+    for (&p.mappings) |*slot| {
+        const mapping = slot.* orelse continue;
+        if (mapping.address != address) continue;
+        // just the page table entries: the pages belong to the object
+        for (0..mapping.object.frames.len) |i| _ = paging.unmapIn(thread.addressSpace(), address + i * pmm.page_size);
+        mapping.object.close();
+        slot.* = null;
+        return true;
+    }
+    return false;
+}
+
 const keyboard_handle: Handle = .{ .object = .keyboard, .rights = .{ .read = true, .duplicate = true, .transfer = true } };
 const console_handle: Handle = .{ .object = .console, .rights = .{ .write = true, .duplicate = true, .transfer = true } };
 
@@ -103,6 +142,9 @@ pub const Process = struct {
     cwd: [128]u8 = .{'/'} ++ .{0} ** 127,
     cwd_len: usize = 1,
     exe: ?*fs.Node = null, // the program file, found by spawn
+    // memory objects mapped into this program (memory_map)
+    mappings: [16]?Mapping = @splat(null),
+    next_map: u64 = map_area_start,
     thread: ?*thread.Thread = null, // set once it runs
     killed: bool = false, // Ctrl+C came before it even started
     ignores_ctrl_c: bool = false, // the shell, started by the kernel
@@ -276,6 +318,10 @@ pub fn exit(code: u64) noreturn {
             if (slot.*) |h| h.close();
             slot.* = null;
         }
+        // shared pages first: freeAddressSpace below would free them too
+        for (p.mappings) |m| if (m) |mapping| {
+            _ = unmapMemory(p, mapping.address);
+        };
         p.exit_code = code;
         p.done = true;
         thread.wakeAll(&p.waiters);

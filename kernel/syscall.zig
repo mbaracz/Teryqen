@@ -12,6 +12,8 @@
 //  18 handle_duplicate(h, rights) -> new handle    19 handle_reduce(h, rights)
 //  20 channel_create() -> h0 | h1 << 32
 //  21 channel_send(h, *SendArgs)   22 channel_recv(h, *RecvArgs) -> bytes
+//  23 memory_create(size) -> h     24 memory_map(h, writable) -> address
+//  25 memory_unmap(address)
 // Paths can be relative to the current directory.
 // Handles are small numbers, every one has rights (read, write, duplicate,
 // transfer; process.Rights) that read/write/... check. Rights only shrink:
@@ -41,6 +43,7 @@ const datadisk = @import("datadisk.zig");
 const timer = @import("timer.zig");
 const pipe_mod = @import("pipe.zig");
 const channel = @import("channel.zig");
+const memory = @import("memory.zig");
 const heap = @import("heap.zig");
 const paging = @import("paging.zig");
 
@@ -294,6 +297,21 @@ fn doSyscall(number: u64, a: u64, b: u64, c: u64) u64 {
         },
         21 => return channelSend(p, a, b),
         22 => return channelRecv(p, a, b),
+        23 => {
+            const m = memory.create(a) orelse return failed;
+            return addHandle(p, .{ .object = .{ .memory = m }, .rights = .all }) orelse {
+                m.close();
+                return failed;
+            };
+        },
+        24 => {
+            // mapping needs read; mapping it writable needs write too
+            const writable = b != 0;
+            const h = getHandle(p, a, .{ .read = true, .write = writable }) orelse return failed;
+            if (h.object != .memory) return failed;
+            return process.mapMemory(p, h.object.memory, writable) orelse failed;
+        },
+        25 => return if (process.unmapMemory(p, a)) 0 else failed,
         else => return failed,
     }
 }

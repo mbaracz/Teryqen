@@ -63,7 +63,12 @@ pub fn mapIn(root: u64, virt: u64, phys: u64, flags: u64) void {
 /// Removes the mapping of one page (kernel page tables) and returns the
 /// physical address it had.
 pub fn unmap(virt: u64) u64 {
-    var table = pmm.toVirt([512]u64, pml4);
+    return unmapIn(pml4, virt);
+}
+
+/// Same, in the page tables at `root`. The page itself isn't freed.
+pub fn unmapIn(root: u64, virt: u64) u64 {
+    var table = pmm.toVirt([512]u64, root);
     var shift: u6 = 39;
     while (shift > 12) : (shift -= 9) {
         const entry = table[(virt >> shift) & 0x1ff];

@@ -176,6 +176,22 @@ pub fn recv(endpoint: u64, bytes: []u8, handles: []u64) ChannelError!Received {
     return .{ .bytes = bytes[0..r], .handles = handles[0..call_args[4]] };
 }
 
+/// Zeroed memory (rounded up to whole pages) that can be shared: send the
+/// handle to another program and both can map the same pages.
+pub fn memoryCreate(size: u64) ?u64 {
+    return result(syscall(23, size, 0, 0));
+}
+
+/// Maps a memory object into this program. Writable needs the write right.
+pub fn memoryMap(handle: u64, size: u64, writable: bool) ?[]u8 {
+    const address = result(syscall(24, handle, @intFromBool(writable), 0)) orelse return null;
+    return @as([*]u8, @ptrFromInt(address))[0..size];
+}
+
+pub fn memoryUnmap(memory: []u8) void {
+    _ = syscall(25, @intFromPtr(memory.ptr), 0, 0);
+}
+
 const failed = std.math.maxInt(u64);
 const peer_closed = failed - 1;
 
